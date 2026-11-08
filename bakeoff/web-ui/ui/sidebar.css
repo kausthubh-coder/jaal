@@ -1,0 +1,104 @@
+:root {
+  /* Keep --bg in step with SIDEBAR_BACKGROUND in src/app.rs. */
+  --bg: #1c1d21;
+  --fg: #e9e9ec;
+  --muted: #8b8c94;
+  --hover: rgba(255, 255, 255, 0.06);
+  --active: rgba(255, 255, 255, 0.12);
+  --field: rgba(255, 255, 255, 0.07);
+  --accent: #7aa2ff;
+  --row-h: 28px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.3 -apple-system, "Segoe UI", sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 8px 0;
+}
+
+#url {
+  flex: none;
+  height: 32px;
+  width: 100%;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--field);
+  color: var(--fg);
+  font: inherit;
+  outline: none;
+}
+
+#url:focus { border-color: var(--accent); }
+
+.label {
+  flex: none;
+  padding: 14px 8px 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#tabs { flex: none; max-height: 40%; overflow-y: auto; }
+
+.tab {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.tab:hover { background: var(--hover); }
+.tab.active { background: var(--active); }
+
+/* The 5,000 rows: one tall spacer for the scrollbar, and a window of row
+   elements moved with a transform so only visible rows exist in the DOM. */
+#rows {
+  flex: 1;
+  position: relative;
+  overflow-y: auto;
+  contain: strict;
+}
+
+#rows-window {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  will-change: transform;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  height: var(--row-h);
+  padding: 0 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.row:hover { background: var(--hover); }
+.row .t { flex: none; }
+.row .u { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }

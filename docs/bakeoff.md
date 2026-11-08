@@ -44,6 +44,28 @@ The test pages are local files under `bakeoff/pages`, so network speed never sho
 
 Then we put screenshots of the three side by side and judge the look.
 
+## How marks are taken
+
+The marks and their log format are in `bakeoff/shared/src/bench.rs`. This is exactly when web-ui writes each one, so the GPUI variants can match it. A time taken in a renderer is `performance.timeOrigin + <time since origin>`, which is milliseconds since the Unix epoch like `now_ms()`. The renderer sends it to the browser process, which writes it with `mark_at`, so marks from both processes line up.
+
+| Mark | When web-ui takes it |
+|---|---|
+| `main` | The first line of `main` in the browser process, before the CEF framework loads. Helper processes are separate binaries and never mark. |
+| `first_paint` | CEF's `LoadHandler::on_load_end` for the first tab's main frame, the first time it fires. Taken in the browser process when the callback runs. |
+| `tabs_loaded` | `on_load_end` has fired for the main frame of every tab that `JAAL_BENCH_TABS` opened. |
+| `tab_switch_start` | The sidebar's `pointerdown` on a tab, using the event's own `timeStamp`. The switch bench calls the same JS function a click calls, with the time of that call. The IPC from the sidebar to the browser process falls inside the measured time. |
+| `tab_switch_done` | The browser process shows the new tab's view and hides the old one, then runs JS in the new page: `requestAnimationFrame` inside `requestAnimationFrame`. The first callback runs as the first frame after the view became visible begins. The second runs as the next frame begins, once the first is out. The mark is the second callback's time. The trip back to the browser process doesn't count. |
+| `frame` | Scroll: the sidebar page's `requestAnimationFrame` times. Each callback moves the rows 40 px and keeps its time. Resize: the active page's `requestAnimationFrame` times, because the page is the view that lays out again at every step (the sidebar stays 280 px wide). Either way the times go to the browser process in one message when the run ends, so measuring adds no IPC per frame. |
+
+Timing of the runs:
+
+- Scroll and resize start 1 s after both the sidebar and the first tab have loaded, so the end of startup doesn't land in the frame times. Each lasts 5 s.
+- Resize: a task on CEF's UI thread sets the window width every 16 ms. The width follows a triangle wave from 900 to 1400 px and back every 2.5 s, worked out from the time since the run started, so a late task doesn't slow the sweep.
+- Switch: 2 s after `tabs_loaded`, 20 switches 500 ms apart, round-robin through the sidebar's tabs starting with tab 2.
+- The app quits when every run it was asked for has finished. `JAAL_BENCH_TABS` alone keeps the app open; the harness quits it by its PID.
+
+For a GPUI variant, `first_paint` and `tab_switch_done` can be taken the same way. `on_load_end` is the same CEF callback, and the double `requestAnimationFrame` works in any CEF page that can send a message back. `frame` there is one mark per frame GPUI draws.
+
 ## Picking the winner
 
 Speed and memory decide first: a variant that's clearly slower or heavier than Helium loses. If two are close, the one that looks better and is easier for agents to change wins.

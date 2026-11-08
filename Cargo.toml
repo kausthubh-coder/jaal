@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["bakeoff/shared"]
+members = ["bakeoff/shared", "bakeoff/web-ui"]
 
 [workspace.package]
 edition = "2024"

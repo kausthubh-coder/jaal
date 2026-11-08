@@ -1,0 +1,38 @@
+[package]
+name = "web-ui"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "web-ui"
+path = "src/main.rs"
+
+# CEF runs its renderer, GPU and utility processes from helper apps inside the
+# bundle. `bundle-cef-app web-ui` copies this binary into them.
+[[bin]]
+name = "web-ui-helper"
+path = "src/bin/web-ui-helper.rs"
+
+[package.metadata.cef.bundle]
+helper_name = "web-ui-helper"
+
+[dependencies]
+cef.workspace = true
+jaal-bakeoff-shared.workspace = true
+
+# The same objc2 major version the cef crate uses, so its CefAppProtocol
+# applies to our NSApplication subclass.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.3"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "NSApplication",
+    "NSEvent",
+    "NSResponder",
+    "NSGraphicsContext",
+] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "NSGeometry",
+    "NSString",
+] }
