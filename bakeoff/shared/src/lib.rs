@@ -3,6 +3,8 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod bench;
+
 /// One row in the sidebar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
