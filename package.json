@@ -1,0 +1,12 @@
+{
+  "name": "jaal",
+  "private": true,
+  "license": "GPL-3.0-only",
+  "scripts": {
+    "pages": "bun scripts/make-pages.ts",
+    "doctor": "bun scripts/doctor.ts",
+    "lint": "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
+    "test": "cargo test --workspace",
+    "check": "bun run lint && bun run test"
+  }
+}

@@ -1,0 +1,5 @@
+target/
+node_modules/
+bakeoff/results/raw/
+*.app/
+.DS_Store

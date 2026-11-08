@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How Native Apps Draw</title>
+<style>
+:root{
+  --fg:var(--foreground,#1b1c1f); --mut:var(--muted-foreground,#5d6168); --bd:var(--border,#d9d9d4);
+  --cd:var(--card,#ffffff); --pri:var(--primary,#2357c4); --mbg:var(--muted,#eeeeea);
+  --ok:var(--success,#1d7a43); --bad:var(--destructive,#b3321f); --warn:var(--warning,#a86b00);
+  --c1:var(--chart-1,#2357c4); --c2:var(--chart-2,#1d7a43); --c3:var(--chart-3,#a86b00); --c4:var(--chart-4,#8a3fb8);
+  --r:var(--radius,8px); --sans:var(--font-sans,system-ui,-apple-system,"Segoe UI",sans-serif); --mono:var(--font-mono,ui-monospace,Menlo,Consolas,monospace);
+}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.55 var(--sans);color:var(--fg)}
+main{max-width:760px;margin:0 auto;padding:4px 2px 40px}
+h1{font-size:26px;line-height:1.2;margin:0 0 6px;text-wrap:balance}
+h2{font-size:19px;margin:38px 0 6px;text-wrap:balance}
+h3{font-size:15px;margin:18px 0 4px}
+p,li{max-width:68ch;text-wrap:pretty}
+.lede{font-size:16.5px;margin:0 0 10px}
+.mut{color:var(--mut)}
+code{font-family:var(--mono);font-size:.88em}
+.toc{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 4px;padding:0;list-style:none}
+.toc a{display:inline-block;font-size:12.5px;padding:3px 9px;border:1px solid var(--bd);border-radius:999px;color:var(--fg);text-decoration:none}
+.toc a:hover{border-color:var(--pri)}
+.fig{border:1px solid var(--bd);border-radius:var(--r);background:var(--cd);padding:14px;margin:12px 0}
+.cap{font-size:13px;color:var(--mut);margin-top:8px;min-height:2.6em}
+.btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+button{font:inherit;font-size:13px;padding:5px 11px;border:1px solid var(--bd);border-radius:6px;background:transparent;color:var(--fg);cursor:pointer}
+button:hover{border-color:var(--pri)}
+button[aria-pressed=true]{border-color:var(--pri);color:var(--pri);font-weight:600}
+button:focus-visible{outline:2px solid var(--pri);outline-offset:2px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;vertical-align:top;padding:6px 8px 6px 0;border-bottom:1px solid var(--bd)}
+th{font-weight:600}
+.tw{overflow-x:auto}
+.ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}.warn{color:var(--warn);font-weight:600}
+.pick{color:var(--pri);font-weight:650}
+/* loop ring */
+.ring{display:grid;grid-template-columns:260px 1fr;gap:16px;align-items:center}
+.ring svg{width:100%;height:auto;max-width:260px}
+.node circle{fill:var(--cd);stroke:var(--bd);stroke-width:1.5;transition:all .25s}
+.node text{font-size:11px;fill:var(--fg);text-anchor:middle;font-family:var(--sans)}
+.node.on circle{stroke:var(--pri);stroke-width:3}
+.node.on text{font-weight:700;fill:var(--pri)}
+.fake{display:flex;flex-direction:column;gap:6px}
+.app{border:1px solid var(--bd);border-radius:8px;padding:10px;min-height:110px;background:var(--mbg)}
+.app .tabs{display:flex;gap:6px;flex-direction:column}
+.app .tab{font-size:12.5px;padding:4px 8px;border-radius:5px;border:1px solid var(--bd);background:var(--cd);cursor:pointer}
+.app .tab.act{border-color:var(--pri);color:var(--pri);font-weight:600}
+.app .tab.pending{outline:2px dashed var(--warn)}
+.clock{font-family:var(--mono);font-size:12px;color:var(--mut)}
+@media (max-width:600px){.ring{grid-template-columns:1fr}}
+/* painters */
+.three{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.col h3{margin:0 0 6px;font-size:13.5px}
+.bx{border:1px solid var(--bd);border-radius:6px;padding:6px 8px;font-size:12px;line-height:1.35;background:var(--cd)}
+.bx b{display:block;font-size:12.5px}
+.bx.hl{border:2px solid var(--pri)}
+.ar{font-size:11px;color:var(--mut);text-align:center;padding:2px 0}
+.os{margin-top:10px;border:1px dashed var(--bd);border-radius:6px;padding:8px;font-size:12.5px;text-align:center}
+@media (max-width:620px){.three{grid-template-columns:1fr}}
+/* stack */
+.stage{position:relative;height:300px;overflow:hidden;border-radius:6px;background:var(--mbg)}
+.win{position:absolute;left:40px;top:40px;width:420px;height:200px;transition:transform .5s}
+.ly{position:absolute;border-radius:7px;transition:transform .5s,opacity .3s;font-size:11.5px;padding:6px 8px;line-height:1.3}
+.ly.base{inset:0;border:1px solid var(--bd);background:var(--cd)}
+.ly.base .sb{position:absolute;left:0;top:0;bottom:0;width:110px;border-right:1px solid var(--bd);padding:6px 8px;color:var(--mut)}
+.ly.page{left:122px;top:12px;right:12px;bottom:12px;display:flex;align-items:flex-end;border:1px solid var(--bd);background:var(--mbg);color:var(--mut)}
+.ly.over{left:150px;top:70px;width:230px;height:42px;border:2px solid var(--pri);background:var(--cd);box-shadow:0 8px 24px rgba(0,0,0,.28);display:flex;align-items:center;font-size:12.5px}
+.tag{display:none}
+.osw{position:absolute;inset:0;pointer-events:none}
+.stage .note{position:absolute;right:10px;bottom:8px;font-size:11px;color:var(--mut)}
+@media (max-width:620px){.win{left:10px;width:300px}.ly.base .sb{width:80px}.ly.page{left:90px}.ly.over{left:100px;width:180px}}
+/* merge */
+.lanes{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.lane{border:1px solid var(--bd);border-radius:6px;padding:8px 10px;font-size:12.5px;min-height:96px;transition:border-color .25s,opacity .25s}
+.lane.hl{border:2px solid var(--pri)}
+.lane.dim{opacity:.45}
+.lane b{display:block;margin-bottom:3px}
+.q{margin-top:8px;font-family:var(--mono);font-size:11.5px;display:flex;gap:4px;flex-wrap:wrap;min-height:24px}
+.q span{border:1px solid var(--bd);border-radius:4px;padding:1px 6px;background:var(--cd)}
+.q span.g{border-color:var(--c2);color:var(--c2)}
+.q span.c{border-color:var(--c1);color:var(--c1)}
+@media (max-width:560px){.lanes{grid-template-columns:1fr}}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.two ul{padding-left:18px;margin:4px 0}
+.two li{margin-bottom:4px;font-size:13.5px}
+@media (max-width:600px){.two{grid-template-columns:1fr}}
+ol.plan li{margin-bottom:8px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+<h1>How native apps draw, and where a Chrome page fits</h1>
+<p class="lede">A desktop app is one loop that waits for events and paints frames. The hard part of a browser is that <b>two painters</b> (your UI and Chrome's page) and <b>two loops</b> (your toolkit's and Chromium's) must share one window and one thread.</p>
+<ul class="toc">
+<li><a href="#loop">1. The main loop</a></li><li><a href="#paint">2. Who paints</a></li><li><a href="#stack">3. UI over a page</a></li>
+<li><a href="#merge">4. One loop, two frameworks</a></li><li><a href="#all">5. Every approach</a></li><li><a href="#gpui">6. GPUI vs Warp vs iced vs zigui</a></li>
+<li><a href="#loka">7. Web UI vs Loka</a></li><li><a href="#plan">8. The plan</a></li>
+</ul>
+
+<h2 id="loop">1. The main loop</h2>
+<p>Every desktop app has one <b>main thread</b>. It runs one loop until the app quits. On the Mac, the app's single <code>NSApplication</code> object runs it (<code>[NSApp run]</code>). On Windows, it is a <code>GetMessage</code> / <code>DispatchMessage</code> loop. Click a tab in the fake app, or step through.</p>
+<div class="fig" id="loopfig">
+  <div class="ring">
+    <svg viewBox="0 0 260 230" aria-label="Main loop ring">
+      <circle cx="130" cy="115" r="82" fill="none" stroke="var(--bd)" stroke-width="1.5" stroke-dasharray="4 4"/>
+      <g id="ringnodes"></g>
+      <circle id="dot" r="6" fill="var(--pri)"/>
+    </svg>
+    <div class="fake">
+      <div class="app"><div class="tabs" id="faketabs"></div></div>
+      <div class="clock" id="clock">frame budget: 16.7 ms at 60 Hz · 8.3 ms at 120 Hz</div>
+    </div>
+  </div>
+  <div class="cap" id="loopcap"></div>
+  <div class="btns"><button id="lb">Back</button><button id="lp">Play</button><button id="ln">Next</button></div>
+</div>
+<p><b>The key rule:</b> the call that starts the loop does not return until the app quits. Whoever calls it first owns the thread for good. A second framework that also calls "run" never gets to start.</p>
+
+<h2 id="paint">2. Who paints the pixels</h2>
+<p>There are three ways a toolkit gets pixels on screen. In all three, the <b>OS compositor</b> has the last word: WindowServer on the Mac and DWM on Windows take every window's pictures and combine them into what you see.</p>
+<div class="fig">
+  <div class="three">
+    <div class="col"><h3>A. OS views</h3>
+      <div class="bx"><b>Your code</b>React Native, SwiftUI, AppKit, WinUI</div>
+      <div class="ar">↓ "make a view here"</div>
+      <div class="bx hl"><b>The OS draws real views</b>Mac: NSView, each with a Core Animation layer · Windows: WinUI</div>
+      <div class="ar">↓ many layers</div>
+      <div class="bx">The OS stacks them</div>
+    </div>
+    <div class="col"><h3>B. Your own painter</h3>
+      <div class="bx"><b>Your code</b>GPUI, WarpUI, iced, zigui, Flutter</div>
+      <div class="ar">↓ draws every pixel itself</div>
+      <div class="bx hl"><b>One GPU picture per window</b>Metal on Mac · DirectX or Vulkan on Windows</div>
+      <div class="ar">↓ one layer</div>
+      <div class="bx">The OS sees one flat image</div>
+    </div>
+    <div class="col"><h3>C. A browser engine paints</h3>
+      <div class="bx"><b>Your code</b>HTML/CSS: Electron, Tauri, web UI in Chromium</div>
+      <div class="ar">↓ engine lays out and paints</div>
+      <div class="bx hl"><b>The engine's compositor</b>Chromium's (viz), or WebKit's</div>
+      <div class="ar">↓ its layers</div>
+      <div class="bx">The OS shows the result</div>
+    </div>
+  </div>
+  <div class="os">A browser adds a second painter: <b>Chrome paints each web page itself</b>, into its own view. Your UI and the page only overlap freely when one compositor stacks both.</div>
+</div>
+<p>That is why React Native (way A) and a web UI in Chromium (way C) can draw over a page: Core Animation stacks both on the Mac, and Chromium's compositor stacks both in the web UI. GPUI (way B) hands the OS one flat image, so a page view placed in the window lands on top of it.</p>
+
+<h2 id="stack">3. Drawing UI over a page: three fixes</h2>
+<p>Pick a fix, then press <b>Explode</b> to see the layers apart and <b>Shake window</b> to see what happens while the window moves.</p>
+<div class="fig">
+  <div class="btns" style="margin:0 0 10px">
+    <button data-mode="A" aria-pressed="true">A. Overlay window</button><button data-mode="C" aria-pressed="false">C. Layers in one window</button><button data-mode="B" aria-pressed="false">B. Page as texture</button>
+    <span style="flex:1"></span><button id="explode">Explode</button><button id="shake">Shake window</button>
+  </div>
+  <div class="stage" id="stage">
+    <div class="win" id="win">
+      <div class="ly base" id="lyBase"><div class="sb">sidebar<br>(GPUI)</div></div>
+      <div class="ly page" id="lyPage">Chrome page view</div>
+      <span class="tag" id="tBase"></span><span class="tag" id="tPage"></span>
+    </div>
+    <div class="ly over" id="lyOver">⌘L command bar, with a shadow</div>
+    <span class="tag" id="tOver"></span>
+    <div class="note" id="stagenote"></div>
+  </div>
+  <div class="cap" id="stackcap"></div>
+</div>
+<div class="tw"><table>
+<tr><th></th><th>A. Overlay window</th><th>C. Layers in one window</th><th>B. Page as texture</th></tr>
+<tr><td>What it is</td><td>A second, transparent GPUI window that floats over the main one</td><td>One window; a second GPUI layer sits above Chrome's page layer inside it</td><td>Chrome paints the page into a shared GPU texture; GPUI draws it like an image</td></tr>
+<tr><td>Shadows over the page</td><td class="ok">Easy: the overlay draws them</td><td class="ok">Easy</td><td class="ok">Easy</td></tr>
+<tr><td>Moving and resizing</td><td class="warn">Two windows present frames on their own, so they can be a frame apart. A Mac child window follows its parent; on Windows you move it yourself</td><td class="ok">Moves as one</td><td class="ok">Moves as one</td></tr>
+<tr><td>Clicks</td><td class="warn">Clicks on its see-through parts must reach the page. On the Mac, "ignore mouse" is per window, so you switch it as the pointer moves</td><td class="ok">The top view says "not mine" for see-through spots</td><td class="warn">You forward every click, scroll and key to Chrome yourself</td></tr>
+<tr><td>Focus</td><td class="warn">The overlay must not make the main window look inactive (a non-activating panel on Mac)</td><td class="ok">One window</td><td class="ok">One window</td></tr>
+<tr><td>Things that cross the edge</td><td class="warn">Draw every moving thing, like a tab being dragged, in the overlay</td><td class="ok">Fine</td><td class="ok">Fine</td></tr>
+<tr><td>Windows</td><td class="ok">Works</td><td class="bad">Likely blocked: a foreign Chrome page on Windows is probably a child window, and nothing layers above one inside the same window</td><td class="ok">Works</td></tr>
+<tr><td>What GPUI needs</td><td>Nothing new</td><td>Two surfaces per window (it draws one today)</td><td>A texture element plus input forwarding</td></tr>
+<tr><td>Verdict</td><td class="pick">Fiddly, not hard. Chrome's own menus, bubbles and autofill dropdowns are separate windows too</td><td>Best on Mac, likely no good on Windows</td><td>The most freedom and the most work</td></tr>
+</table></div>
+<p class="mut">You were right that it isn't hard in principle. The work in A is a list of small jobs (follow the window, pass clicks through, keep focus), not one big wall.</p>
+
+<h2 id="merge">4. One loop, two frameworks</h2>
+<p>Chromium must own the loop: Chrome's code assumes its own loop and its own app class, <code>BrowserCrApplication</code>. So GPUI has to run inside it. Step through how.</p>
+<div class="fig">
+  <div class="lanes">
+    <div class="lane" id="laneC"><b>Chromium</b><span id="txtC"></span><div class="q" id="qC"></div></div>
+    <div class="lane" id="laneG"><b>GPUI</b><span id="txtG"></span><div class="q" id="qG"></div></div>
+  </div>
+  <div class="cap" id="mergecap"></div>
+  <div class="btns"><button id="mb">Back</button><button id="mp">Play</button><button id="mn">Next</button></div>
+</div>
+<p>I read GPUI's code for this. On the Mac it queues main-thread work on the system's main queue (<code>DispatchQueue::main()</code> in <code>crates/gpui_apple/src/dispatcher.rs</code>). On Windows it posts window messages (<code>PostMessageW</code> in <code>crates/gpui_windows</code>). Any running loop processes both, Chromium's included. What's left is a focused fork of <code>gpui_macos</code> and <code>gpui_windows</code>:</p>
+<ol>
+<li>Skip GPUI's <code>run()</code>. Start GPUI from Chromium's startup callback, the way Ardia starts React Native.</li>
+<li>On the Mac, drop GPUI's own app class, <code>GPUIApplication</code> (<code>crates/gpui_macos/src/platform.rs</code>, line 67). Only one app class can exist, and Chromium's wins. Move GPUI's one per-app pointer to a global, and add its few event hooks to Chromium's class.</li>
+<li>On Windows, nothing else: Chromium's message pump already delivers GPUI's window messages.</li>
+</ol>
+
+<h2 id="all">5. Every approach, side by side</h2>
+<div class="tw"><table>
+<tr><th>Approach</th><th>Who paints the UI</th><th>Who runs the loop</th><th>UI over the page</th><th>Chrome extensions</th><th>Mac + Windows</th></tr>
+<tr><td>React Native (Ardia)</td><td>The OS (views)</td><td>Chromium; React Native plugs in</td><td class="ok">Mac yes</td><td class="ok">Yes</td><td class="warn">Mac only so far</td></tr>
+<tr><td>Web UI in your Chromium</td><td>Chromium</td><td>Chromium</td><td class="ok">Yes, one compositor</td><td class="ok">Yes</td><td class="ok">One codebase</td></tr>
+<tr><td>Loka (old)</td><td>Chromium, inside Chrome's own window</td><td>Chromium</td><td class="ok">Yes</td><td class="ok">Yes</td><td class="warn">Windows only so far</td></tr>
+<tr><td>GPUI + Chromium</td><td>GPUI (one GPU picture)</td><td>Needs the fork in section 4</td><td class="warn">Via fix A or B</td><td class="ok">Yes</td><td class="ok">One codebase</td></tr>
+<tr><td>Electron</td><td>Electron's Chromium</td><td>Electron</td><td class="ok">Yes</td><td class="bad">Partial, no Web Store</td><td class="ok">Yes</td></tr>
+<tr><td>Tauri</td><td>The system web view</td><td>Tauri</td><td class="ok">Yes</td><td class="bad">No; WebKit on Mac</td><td class="ok">Yes</td></tr>
+<tr><td>Vercel Native SDK</td><td>Its own painter</td><td>Native SDK</td><td class="mut">Untested</td><td class="bad">No on Windows (WebView2); Chromium only on Mac, through CEF</td><td class="warn">Windows draws in software</td></tr>
+</table></div>
+
+<h2 id="gpui">6. GPUI vs Warp vs iced vs zigui vs Native SDK</h2>
+<p>All five are "your own painter" toolkits (way B), so all five share the overlap and loop questions above.</p>
+<div class="tw"><table>
+<tr><th></th><th>GPUI</th><th>WarpUI</th><th>iced</th><th>zigui</th><th>Native SDK</th></tr>
+<tr><td>Language</td><td>Rust</td><td>Rust</td><td>Rust</td><td>Zig</td><td>Zig, app logic in TypeScript</td></tr>
+<tr><td>Built for</td><td>Zed editor</td><td>Warp terminal</td><td>General apps; System76's COSMIC desktop</td><td>SwiftUI-style apps</td><td>General apps (Vercel Labs)</td></tr>
+<tr><td>Mac drawing</td><td>Metal</td><td>Metal</td><td>wgpu (Metal)</td><td>SDL_GPU (Metal)</td><td>Metal</td></tr>
+<tr><td>Windows drawing</td><td>DirectX 11</td><td>Ships on Windows</td><td>wgpu (DirectX 12 or Vulkan)</td><td>SDL_GPU (Vulkan)</td><td class="bad">Software, copied with GDI</td></tr>
+<tr><td>Loop</td><td>Its own (<code>[app run]</code>, <code>GetMessageW</code>)</td><td>Its own</td><td>winit's</td><td>SDL's</td><td>Its own</td></tr>
+<tr><td>Hold a native view</td><td>Not upstream; the gpui-box fork adds it</td><td>Not checked</td><td>Not checked</td><td>Not checked</td><td>Web views only</td></tr>
+<tr><td>Stability</td><td>No 1.0; community fork gpui-ce at 0.3</td><td>Client open-sourced in 2026 (repo has AGPL-3.0 and MIT licence files)</td><td>Mature, pre-1.0</td><td>New (June 2026)</td><td>Labelled experimental</td></tr>
+<tr><td>GitHub stars</td><td>94k (whole Zed repo)</td><td>66k (whole Warp repo)</td><td>32k</td><td>99</td><td>7.8k</td></tr>
+<tr><td>Fit for a browser</td><td class="pick">Best of these: fastest, most used, Windows on DirectX</td><td>Built for Warp; less used outside it</td><td>Good second choice</td><td>Too new</td><td class="bad">Not until Windows draws on the GPU</td></tr>
+</table></div>
+
+<h2 id="loka">7. Web UI in Chromium vs Loka</h2>
+<p>Loka already had a web UI in Chromium: its sidebar is a built-in page, <code>chrome://loka-sidebar.top-chrome</code>, inside Chrome's own window. The new idea changes three things.</p>
+<div class="two">
+<div><h3>Loka</h3><ul>
+<li>Keeps Chrome's own browser window and hides parts of it (a "sidebar-only layout" patch).</li>
+<li>The sidebar bundle is packed into the browser's resource files (paks). A UI change means <code>bun run webui:build</code>, then a Chromium rebuild.</li>
+<li>Every agent needs the build checkout, <code>C:\src\loka</code>.</li>
+<li>Gets Chrome's find bar, fullscreen, bubbles and side panel for free.</li>
+<li>Windows only so far.</li>
+</ul></div>
+<div><h3>The new idea</h3><ul>
+<li>Strips Chrome's window UI, as Ardia does. A small Views host shows the UI page and the page views.</li>
+<li>The UI loads from a folder, or a dev server while you work, so a UI change needs no rebuild. (My design, not yet proven.)</li>
+<li>The engine is a prebuilt download, so agents doing UI work need no Chromium tree.</li>
+<li>Has to rebuild the find bar, fullscreen and prompts, Ardia's cost list.</li>
+<li>Mac and Windows from day one.</li>
+</ul></div>
+</div>
+<h3>What a web UI costs, compared with GPUI</h3>
+<ul>
+<li><b>One extra renderer process</b> for the UI page. Its memory cost isn't measured yet.</li>
+<li><b>A click crosses processes.</b> It goes from the browser process to the UI's renderer and back. GPUI handles it on one thread.</li>
+<li><b>Speed depends on discipline.</b> A light framework (Lit, as Loka uses, or Solid) and a speed budget keep it fast. Edge got 42% faster by dropping React.</li>
+<li><b>Less native by default.</b> Blur needs a transparent page over the OS material. That is untested.</li>
+<li><b>Gains:</b> overlap for free, one loop, Chrome's popups attach to the window, and agents test the UI with the same CDP tools they use on pages.</li>
+</ul>
+
+<h2 id="plan">8. The plan</h2>
+<p>The engine is the same whichever UI wins, so build it first. Then settle the UI with measurements, not opinions.</p>
+<ol class="plan">
+<li><b>Engine, like Ardia's.</b> Helium plus a small layer that runs Chrome tabs and profiles with no Chrome window UI, behind a plain C API. Build it per platform: the Mac mini overnight, Windows on Depot or the laptop. Publish each build as a download, so UI work never needs the Chromium tree.</li>
+<li><b>Bake-off: one tiny browser, built three ways.</b> Sidebar, one live page, a ⌘L command bar with a shadow over the page, and a tab you can drag into the page.
+  <ul><li>Web UI in Chromium (thin Views host).</li><li>GPUI inside Chromium's loop, with fix A overlays.</li><li>GPUI with fix B (page as texture), Mac first.</li></ul></li>
+<li><b>Measure each on Mac and Windows.</b> Cold start, memory with 10 tabs, tab switch time, sidebar scrolling with 5,000 rows, dropped frames while resizing, and idle CPU. Compare against plain Helium.</li>
+<li><b>Look at them side by side.</b> You judge the polish.</li>
+<li><b>Pick the winner and build the Arc layer on it:</b> spaces, pinned folders, Glance, command bar, auto-archive, then sync and updates.</li>
+</ol>
+<p class="mut">My bet before the numbers: GPUI with fix A wins on speed and polish, and the web UI wins on simplicity. The bake-off decides.</p>
+
+<h2>Sources</h2>
+<ul class="mut" style="font-size:13px">
+<li>Zed source: <code>crates/gpui_macos/src/platform.rs</code> (<code>GPUIApplication</code>, <code>[app run]</code>), <code>crates/gpui_windows/src/platform.rs</code> (<code>GetMessageW</code>), <code>crates/gpui_apple/src/dispatcher.rs</code> (<code>DispatchQueue::main()</code>), read 7 Nov 2026.</li>
+<li>Ardia docs: <code>docs/agent-brief.md</code>, <code>docs/ardiacore-spike.md</code> (github.com/mantrakp04/ardia).</li>
+<li>Loka: <code>AGENTS.md</code>, <code>docs/browser-build.md</code>.</li>
+<li>gpui-box <code>platform_view</code> (docs.rs), gpui-ce (gpui-ce.github.io), vercel-labs/native platform-support page, ddalcu/zigui, iced-rs/iced, warpdotdev/Warp.</li>
+</ul>
+</main>
+<script>
+(()=>{
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* ---------- 1. loop ring ---------- */
+const steps=[
+ {n:'Wait',c:'Wait: the main thread sleeps. It costs no CPU until the OS hands it an event.'},
+ {n:'Event',c:'Event: the OS delivers a click on "Docs". It could also be a key, a timer or a network reply.'},
+ {n:'Handle',c:'Handle: the app updates its state: active tab = Docs. Nothing on screen has changed yet.'},
+ {n:'Paint',c:'Lay out and paint: the app works out what changed and draws the new frame. All of this must fit in one frame budget.'},
+ {n:'Show',c:'Show: at the next screen refresh, the OS compositor puts the frame on screen. Then the loop goes back to Wait.'}];
+const ringG=document.getElementById('ringnodes'),dot=document.getElementById('dot');
+const pos=steps.map((s,i)=>{const a=-Math.PI/2+i*2*Math.PI/steps.length;return [130+82*Math.cos(a),115+82*Math.sin(a)]});
+steps.forEach((s,i)=>{const g=document.createElementNS('http://www.w3.org/2000/svg','g');g.setAttribute('class','node');
+ g.innerHTML=`<circle cx="${pos[i][0]}" cy="${pos[i][1]}" r="27"/><text x="${pos[i][0]}" y="${pos[i][1]+4}">${s.n}</text>`;ringG.appendChild(g)});
+const tabsEl=document.getElementById('faketabs');const names=['Inbox','Docs','Calendar'];let active=0,pending=-1,li=0,timer=null;
+function drawTabs(){tabsEl.innerHTML='';names.forEach((n,i)=>{const d=document.createElement('div');d.className='tab'+(i===active?' act':'')+(i===pending?' pending':'');d.textContent=n;d.onclick=()=>{pending=i;steps[1].c=`Event: the OS delivers a click on "${n}". It could also be a key, a timer or a network reply.`;steps[2].c=`Handle: the app updates its state: active tab = ${n}. Nothing on screen has changed yet.`;li=1;showLoop();play(true)};tabsEl.appendChild(d)})}
+function showLoop(){[...ringG.children].forEach((g,i)=>g.classList.toggle('on',i===li));dot.setAttribute('cx',pos[li][0]);dot.setAttribute('cy',pos[li][1]-27);
+ if(li===4&&pending>=0){active=pending;pending=-1}
+ drawTabs();document.getElementById('loopcap').textContent=(li+1)+'/5 · '+steps[li].c}
+function play(force){clearInterval(timer);const b=document.getElementById('lp');if(timer&&!force){timer=null;b.textContent='Play';return}
+ b.textContent='Pause';timer=setInterval(()=>{li++;if(li>4){li=0;clearInterval(timer);timer=null;b.textContent='Play'}showLoop()},reduce?1400:1100)}
+document.getElementById('ln').onclick=()=>{li=(li+1)%5;showLoop()};document.getElementById('lb').onclick=()=>{li=(li+4)%5;showLoop()};
+document.getElementById('lp').onclick=()=>play(false);showLoop();
+
+/* ---------- 3. stack ---------- */
+const modes={
+ A:{cap:'A. Overlay window: the command bar is its own transparent OS window above the main one. During the shake it trails by a frame (slowed down here so you can see it).',
+    tags:['GPUI main window','Chrome page view (inside it)','GPUI overlay window: a 2nd OS window'],lag:6},
+ C:{cap:'C. Layers in one window: GPUI draws a bottom layer and a top layer, with Chrome\'s page layer between them. Everything moves together. Works on Mac; likely blocked on Windows.',
+    tags:['GPUI bottom layer','Chrome page layer','GPUI top layer (same window)'],lag:0},
+ B:{cap:'B. Page as texture: Chrome paints the page into a shared GPU texture and GPUI draws it like an image, so everything is one GPUI picture. You forward all input to Chrome.',
+    tags:['GPUI picture','page texture, drawn by GPUI','GPUI command bar (same picture)'],lag:0}};
+let mode='A',exploded=false;const W=document.getElementById('win'),O=document.getElementById('lyOver'),P=document.getElementById('lyPage'),B=document.getElementById('lyBase');
+const tB=document.getElementById('tBase'),tP=document.getElementById('tPage'),tO=document.getElementById('tOver'),stage=document.getElementById('stage');
+function overBase(){const s=getComputedStyle(O);return {l:parseFloat(s.left),t:parseFloat(s.top)}}
+function layout(dx,dy,odx,ody){
+ const e=exploded?1:0;
+ W.style.transform=`translate(${dx}px,${dy}px)`;
+ B.style.transform=`translate(${-e*26}px,${e*30}px)`;
+ P.style.transform=`translate(0px,0px)`;
+ O.style.transform=`translate(${odx+e*26}px,${ody-e*30}px)`;
+ const t=modes[mode].tags;
+ B.querySelector('.sb').innerHTML=e?'<b style="color:var(--pri)">'+t[0]+'</b>':'sidebar<br>(GPUI)';
+ P.innerHTML=e?'<b style="color:var(--pri)">'+t[1]+'</b>':'Chrome page view';
+ O.innerHTML=e?'<b style="color:var(--pri)">'+t[2]+'</b>':'⌘L command bar, with a shadow';
+ P.style.opacity=mode==='B'?.85:1;P.style.borderStyle=mode==='B'?'dashed':'solid'}
+function setMode(m){mode=m;document.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.mode===m));
+ const t=modes[m].tags;tB.textContent=t[0];tP.textContent=t[1];tO.textContent=t[2];
+ document.getElementById('stackcap').textContent=modes[m].cap;
+ document.getElementById('stagenote').textContent=m==='A'?'2 OS windows':'1 OS window';layout(0,0,0,0)}
+document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
+document.getElementById('explode').onclick=e=>{exploded=!exploded;stage.classList.toggle('exploded',exploded);e.target.setAttribute('aria-pressed',exploded);layout(0,0,0,0)};
+document.getElementById('shake').onclick=()=>{
+ if(reduce){layout(0,0,0,0);return}
+ W.style.transition='none';O.style.transition='none';const hist=[];let f=0;const N=90;
+ const step=()=>{const k=f/N;const dx=Math.sin(k*Math.PI*6)*60*(1-k),dy=Math.cos(k*Math.PI*4)*18*(1-k);hist.push([dx,dy]);
+  const lag=modes[mode].lag;const o=hist[Math.max(0,hist.length-1-lag)];layout(dx,dy,o[0],o[1]);f++;
+  if(f<=N)requestAnimationFrame(step);else{W.style.transition='';O.style.transition='';layout(0,0,0,0)}};requestAnimationFrame(step)};
+setMode('A');
+
+/* ---------- 4. merge ---------- */
+const ms=[
+ {c:'Starts first. Calls <code>[NSApp run]</code> / its message pump. The loop now belongs to Chromium.',g:'Not started yet.',hc:1,hg:0,qc:['tab load'],qg:[],cap:'Chromium starts the process and runs the main loop, as in Ardia.'},
+ {c:'Loop running.',g:'Stock GPUI would now call <code>run()</code>, which never returns. It would block, so the fork skips it.',hc:0,hg:1,qc:['tab load'],qg:[],cap:'Problem: two "run forever" calls on one thread. Fix: GPUI never calls run().'},
+ {c:'Startup callback fires: "start your UI now".',g:'Opens its window and draws the sidebar, inside Chromium\'s loop.',hc:1,hg:1,qc:['tab load'],qg:['open window'],cap:'Chromium calls GPUI from its startup callback, the way Ardia starts React Native.'},
+ {c:'Each turn of the loop runs whatever is queued: its own tasks and GPUI\'s.',g:'Queues work on the main queue (Mac) or posts a window message (Windows).',hc:1,hg:1,qc:['tab load','input','GPUI paint'],qg:['→ main queue'],cap:'GPUI\'s work rides on OS queues that any loop drains, so Chromium\'s loop runs it too.'},
+ {c:'Owns the app class: <code>BrowserCrApplication</code>.',g:'Its own class, <code>GPUIApplication</code>, is dropped; its hooks move into Chromium\'s.',hc:1,hg:1,qc:['tab load','input','GPUI paint'],qg:[],cap:'Mac only: one app class per process. Chromium\'s wins; GPUI\'s few hooks move into it.'}];
+let mi=0,mt=null;
+function showM(){const s=ms[mi];document.getElementById('txtC').innerHTML=s.c;document.getElementById('txtG').innerHTML=s.g;
+ document.getElementById('laneC').className='lane'+(s.hc?' hl':'');document.getElementById('laneG').className='lane'+(s.hg?' hl':' dim');
+ document.getElementById('qC').innerHTML=s.qc.map(x=>`<span class="${x==='GPUI paint'?'g':'c'}">${x}</span>`).join('');
+ document.getElementById('qG').innerHTML=s.qg.map(x=>`<span class="g">${x}</span>`).join('');
+ document.getElementById('mergecap').textContent=(mi+1)+'/'+ms.length+' · '+s.cap}
+document.getElementById('mn').onclick=()=>{mi=Math.min(ms.length-1,mi+1);showM()};document.getElementById('mb').onclick=()=>{mi=Math.max(0,mi-1);showM()};
+document.getElementById('mp').onclick=e=>{clearInterval(mt);if(mt){mt=null;e.target.textContent='Play';return}e.target.textContent='Pause';
+ mt=setInterval(()=>{if(mi>=ms.length-1){clearInterval(mt);mt=null;e.target.textContent='Play';return}mi++;showM()},reduce?2200:1800)};showM();
+})();
+</script>
+</body>
+</html>

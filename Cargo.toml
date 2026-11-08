@@ -1,0 +1,12 @@
+[workspace]
+resolver = "3"
+members = ["bakeoff/shared"]
+
+[workspace.package]
+edition = "2024"
+license = "GPL-3.0-only"
+publish = false
+
+[workspace.dependencies]
+cef = "=156.4.0"
+jaal-bakeoff-shared = { path = "bakeoff/shared" }
