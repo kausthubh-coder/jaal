@@ -1,0 +1,30 @@
+[package]
+name = "gpui-a"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "gpui-a"
+path = "src/main.rs"
+
+[[bin]]
+name = "gpui-a-helper"
+path = "src/bin/gpui-a-helper.rs"
+
+# Read by bundle-cef-app.
+[package.metadata.cef.bundle]
+helper_name = "gpui-a-helper"
+
+[dependencies]
+cef.workspace = true
+jaal-bakeoff-shared.workspace = true
+jaal-gpui-cef = { path = "../gpui-cef" }
+# runtime_shaders: this Mac has no full Xcode, so no offline Metal compiler.
+gpui = { version = "=0.2.2", default-features = false, features = ["runtime_shaders", "font-kit"] }
+futures = "0.3"
+raw-window-handle = "0.6"
+unicode-segmentation = "1.10"
+objc2 = "0.6.3"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "objc2-core-foundation"] }

@@ -47,3 +47,25 @@ Then we put screenshots of the three side by side and judge the look.
 ## Picking the winner
 
 Speed and memory decide first: a variant that's clearly slower or heavier than Helium loses. If two are close, the one that looks better and is easier for agents to change wins.
+
+## How marks are taken
+
+Marks go through `bakeoff/shared/src/bench.rs` and only when `JAAL_BENCH_LOG` names a file. Each variant takes them at the same moments:
+
+| Mark | Moment | Where gpui-a takes it |
+|---|---|---|
+| `main` | First line of `main` in the browser process | `main.rs` |
+| `first_paint` | CEF's `on_load_end` for the first tab's main frame | Inside the CEF callback, not after a hop to the UI |
+| `tabs_loaded` | Every tab opened by `JAAL_BENCH_TABS` has had its main frame's `on_load_end` | Inside the CEF callback |
+| `tab_switch_start` | The switch begins: the sidebar click handler, or the switch bench's step, which calls the same code. Clicking the tab that is already active marks nothing | `BrowserWindow::activate_tab` |
+| `tab_switch_done` | The new page's second `requestAnimationFrame` after it became visible: the first runs as its first frame begins, the second once that frame is out. The page logs `performance.timeOrigin + performance.now()` to the console and the mark uses that time, so the trip back to the browser process doesn't count | Console handler |
+| `frame` | One per UI frame, only with `JAAL_BENCH_FRAMES=1` | Each GPUI render of the main window's root view. During the scroll and resize runs that is every display-link tick |
+
+Bench modes, set by environment variables:
+
+- `JAAL_BENCH_TABS=N`: open test pages 1 to N as tabs, tab 1 active. Mark `tabs_loaded`, then stay open until the harness quits the app.
+- `JAAL_BENCH_SWITCH=1` (with `JAAL_BENCH_TABS=10`): 2 s after `tabs_loaded`, switch tabs 20 times, 500 ms apart, round robin from tab 2 (2, 3, ... 10, 1, 2, ...), then quit.
+- `JAAL_BENCH_SCROLL=1`: after `first_paint`, scroll the 5,000 sidebar rows 40 px per frame for 5 s, then quit.
+- `JAAL_BENCH_RESIZE=1`: after `first_paint`, sweep the window width 900 → 1400 → 900 px every 2 s for 5 s, height fixed, then quit. This sets the size from code each frame; it is not AppKit's live resize, which only a drag starts.
+- `JAAL_PROFILE_DIR`: the CEF profile and cache folder. Defaults to `target/profiles/<variant>`.
+- The first command-line argument, if it isn't a switch, is the URL of the first tab instead of test page 1.

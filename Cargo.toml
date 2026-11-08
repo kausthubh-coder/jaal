@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["bakeoff/shared"]
+members = ["bakeoff/shared", "bakeoff/gpui-cef", "bakeoff/gpui-a"]
 
 [workspace.package]
 edition = "2024"

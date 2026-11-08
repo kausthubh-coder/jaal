@@ -21,6 +21,7 @@ Read `docs/plan.md` for the whole plan and `docs/bakeoff.md` for the bake-off ru
 | `bakeoff/shared` | Tab list, the 5,000 fake sidebar rows, test page URLs. Every variant uses it |
 | `bakeoff/pages` | The 10 static test pages, written by `scripts/make-pages.ts` |
 | `bakeoff/web-ui`, `bakeoff/gpui-a`, `bakeoff/gpui-b` | One crate per variant |
+| `bakeoff/gpui-cef` | GPUI + CEF glue both GPUI variants use: NSApp patch, external message pump, CEF browsers as child views |
 | `bakeoff/bench` | The scripts that run the tests and write `bakeoff/results` |
 | `docs/` | Plan, bake-off rules, research |
 | `scripts/` | doctor and page generator |
@@ -31,7 +32,8 @@ Shared code goes in `bakeoff/shared` only when two variants really use it.
 
 - Doctor: `bun run doctor` (cargo, cmake, ninja, CEF at `$CEF_PATH`, test pages). Run it first when a build fails in a way that looks like setup.
 - CEF binaries: `CEF_PATH` defaults to `~/.local/share/cef` (CEF 156, from cef-rs's `export-cef-dir`). On macOS also set `DYLD_FALLBACK_LIBRARY_PATH="$CEF_PATH:$CEF_PATH/Chromium Embedded Framework.framework/Libraries"`.
-- Bundle and run a variant on macOS: `bundle-cef-app <crate> -o target/bundle`, then `target/bundle/<crate>.app/Contents/MacOS/<crate>`. CEF needs the bundle with its helper apps; `cargo run` alone won't start it.
+- Bundle and run a variant on macOS: `bun scripts/bundle.ts <crate>` (add `--release` for the bench), then `target/bundle/<crate>.app/Contents/MacOS/<crate>`. CEF needs the bundle with its helper apps; `cargo run` alone won't start it. The script calls `bundle-cef-app` (in `~/.cargo/bin`, which may not be on PATH), which has no `--release` flag on macOS, and ad-hoc signs the bundle so `open` will launch it.
+- Launched from a shell, the app stays inactive (macOS won't let a background process bring it to the front) and Stage Manager may park its window in the side strip. Launch with `open -n -a target/bundle/<crate>.app` to have it placed on stage. `JAAL_DEMO=1` runs gpui-a's scripted session (tabs, command bar, move, resize, scroll) for screenshots; see `bakeoff/gpui-a/src/demo.rs`.
 - Test: `cargo test -p <crate>`.
 - Lint the crate you changed: `cargo clippy -p <crate> --all-targets -- -D warnings` and `cargo fmt -p <crate>`.
 - Full check (CI runs this): `bun run check`.
