@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["bakeoff/shared", "bakeoff/gpui-cef", "bakeoff/gpui-a", "bakeoff/gpui-b"]
+members = ["bakeoff/shared", "bakeoff/web-ui", "bakeoff/gpui-cef", "bakeoff/gpui-a", "bakeoff/gpui-b"]
 # Vendored and patched; linted and formatted upstream, not here.
 exclude = ["third_party/gpui"]
 

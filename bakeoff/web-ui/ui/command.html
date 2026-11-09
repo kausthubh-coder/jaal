@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>jaal command bar</title>
+<style>
+  /* The page fills the overlay exactly. CEF paints a windowed browser's
+     background opaque, so nothing here can reach outside this rectangle:
+     no CSS shadow over the page, and backdrop-filter would only blur this
+     page's own background. macOS rounds the overlay window and draws its
+     shadow (src/mac.rs, round_overlay_with_shadow). */
+  :root { --card: #202126; } /* COMMAND_BAR_BACKGROUND in src/app.rs */
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--card);
+    overflow: hidden;
+    font: 15px/1.3 -apple-system, "Segoe UI", sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  .card {
+    box-sizing: border-box;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #f1f1f4;
+  }
+
+  input {
+    flex: none;
+    height: 56px;
+    padding: 0 20px;
+    border: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 18px;
+    outline: none;
+  }
+
+  input::placeholder { color: rgba(255, 255, 255, 0.45); }
+
+  ul { margin: 0; padding: 8px; list-style: none; }
+
+  li {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-radius: 8px;
+  }
+
+  li:first-child { background: rgba(255, 255, 255, 0.08); }
+  kbd { color: rgba(255, 255, 255, 0.5); font: inherit; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <input id="q" type="text" spellcheck="false" autocomplete="off" placeholder="Type a URL and press Enter">
+  <ul>
+    <li>Go to URL <kbd>Enter</kbd></li>
+    <li>New tab <kbd>⌘T</kbd></li>
+    <li>Close tab <kbd>⌘W</kbd></li>
+    <li>Close this bar <kbd>Esc</kbd></li>
+  </ul>
+</div>
+<script>
+  const q = document.getElementById("q");
+  const send = (request) => window.cefQuery({ request, onSuccess() {}, onFailure() {} });
+  q.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") send(`command_bar_submit\n${q.value.replace(/\n/g, "")}`);
+    else if (e.key === "Escape") send("hide_command_bar");
+  });
+  window.jaal = {
+    open() {
+      q.value = "";
+      q.focus();
+    },
+  };
+</script>
+</body>
+</html>
