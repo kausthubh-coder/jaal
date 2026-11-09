@@ -5,10 +5,10 @@ jaal is an Arc-style browser on Chromium with full Chrome extensions and the Web
 ## How it's built
 
 - **UI: gpui-a.** Zed's GPUI draws the window. Each page is Chrome's own native view on top of it, so input, menus and popups work as in Chrome. Anything over the page (command bar, extension popups, prompts) is a see-through child window glued to the main one. The bake-off picked it: least memory, real OS blur, no input forwarding ([bakeoff.md](bakeoff.md), [results](../bakeoff/results/2026-11-09-Mac.md)).
-- **Engine.** Chromium plus our own patches, which turn it into a library: no Chrome window UI, each tab's page handed to our app, and commands like `tabs.open`. Ardia does the same on the Mac, and its docs are the best map we have. The base is still open (see below).
+- **Engine.** Chromium plus our own patches, which turn it into a library: no Chrome window UI, each tab's page handed to our app, and commands like `tabs.open`. Ardia does the same on the Mac, and its docs are the best map we have. It starts from plain Chromium (see below).
 - **Builds.** The engine is built about once a month, when Chrome updates, and published as a download. Everyday UI work only downloads it. Engine changes are made in a local copy, which rebuilds in minutes after its first long build.
 
-## Open decision: what the engine starts from
+## Decided: plain Chromium, not Helium
 
 | | Helium | Plain Chromium plus picked privacy patches |
 |---|---|---|
@@ -17,12 +17,12 @@ jaal is an Arc-style browser on Chromium with full Chrome extensions and the Web
 | Web Store and updates | Routed through Helium's servers, which Ardia turned off and sent straight to Google | Straight to Google, as Chrome does |
 | Upstreams to follow | Two (Chromium and Helium) | One |
 
-Leaning: plain Chromium plus picked patches.
+Decided on 2026-11-09: plain Chromium plus picked patches. jaal's own license can be chosen later; the repo stays GPL-3.0 until then.
 
 ## Order
 
 1. **Bake-off** on prebuilt CEF. Done on the Mac; gpui-a is being ported to Windows so it can be tried there.
-2. **Engine**: Chromium plus the library patches. The first Mac build needs Xcode on the Mac mini.
+2. **Engine**: plain Chromium plus picked privacy patches and the library patches. The first Mac build needs Xcode on the Mac mini.
 3. **gpui-a on the engine**: replace CEF.
 4. **Essentials, at least as good as Chrome and Helium** (checklist below).
 5. **Good UX**: sidebar, tab management, profiles, spaces, pinned tabs, folders.
