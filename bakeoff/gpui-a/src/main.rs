@@ -2,8 +2,13 @@
 //! native child views, and the command bar as a second window glued over
 //! the page (fix A). See docs/bakeoff.md.
 
+// No console window behind the browser on Windows. Debug builds keep theirs
+// for the log.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod browser;
 mod command_bar;
+#[cfg_attr(target_os = "windows", path = "demo_win.rs")]
 mod demo;
 mod overlay;
 
@@ -33,9 +38,9 @@ fn main() {
     let bench = bench::BenchConfig::from_env();
     let urls = bench::startup_urls(bench.tabs, bench::url_argument(std::env::args()));
 
-    // CEF first: it loads the framework, adds CefAppProtocol to GPUI's
-    // NSApplication subclass and creates NSApp, all before GPUI's platform
-    // exists. Keep the loader alive until exit.
+    // CEF first. On macOS it loads the framework, adds CefAppProtocol to
+    // GPUI's NSApplication subclass and creates NSApp, all before GPUI's
+    // platform exists. Keep the result alive until exit.
     let _cef = jaal_gpui_cef::start(&profile_dir());
 
     Application::new().run(move |cx: &mut App| {
