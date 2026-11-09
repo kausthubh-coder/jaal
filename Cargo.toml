@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["bakeoff/shared"]
+members = ["bakeoff/shared", "bakeoff/gpui-cef", "bakeoff/gpui-a", "bakeoff/gpui-b"]
+# Vendored and patched; linted and formatted upstream, not here.
+exclude = ["third_party/gpui"]
 
 [workspace.package]
 edition = "2024"
@@ -10,3 +12,8 @@ publish = false
 [workspace.dependencies]
 cef = "=156.4.0"
 jaal-bakeoff-shared = { path = "bakeoff/shared" }
+
+# Both GPUI variants build against the same patched gpui; see
+# third_party/gpui/JAAL.md for what changed.
+[patch.crates-io]
+gpui = { path = "third_party/gpui" }
