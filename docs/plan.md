@@ -1,20 +1,56 @@
 # Plan
 
-jaal is an Arc-style browser on Chromium with full Chrome extensions and the Web Store, for Mac and Windows. AI (Codex or Claude) is optional and comes after the browser works.
+jaal is an Arc-style browser on Chromium with full Chrome extensions and the Web Store, for Mac and Windows. It must never be worse than Chrome or Helium at anything a browser does. AI (Codex or Claude) is optional and comes last.
 
 ## How it's built
 
-- **Engine.** Helium (an ungoogled Chromium) plus our own patches, which turn Chromium into a library. The engine has no Chrome window UI, hands each tab's page to our app, and takes commands like `tabs.open`. Ardia does the same thing on the Mac, and its docs are the best map we have.
-- **App.** Our own window, sidebar and command bar, drawn by whichever toolkit wins the bake-off.
-- **Builds.** Depot builds the engine for Mac and Windows about once a month, when Chrome updates, and publishes it as a download. Everyday UI work only downloads that engine. Engine changes are made in a local copy, which rebuilds in minutes after its first long build.
+- **UI: gpui-a.** Zed's GPUI draws the window. Each page is Chrome's own native view on top of it, so input, menus and popups work as in Chrome. Anything over the page (command bar, extension popups, prompts) is a see-through child window glued to the main one. The bake-off picked it: least memory, real OS blur, no input forwarding ([bakeoff.md](bakeoff.md), [results](../bakeoff/results/2026-11-09-Mac.md)).
+- **Engine.** Chromium plus our own patches, which turn it into a library: no Chrome window UI, each tab's page handed to our app, and commands like `tabs.open`. Ardia does the same on the Mac, and its docs are the best map we have. The base is still open (see below).
+- **Builds.** The engine is built about once a month, when Chrome updates, and published as a download. Everyday UI work only downloads it. Engine changes are made in a local copy, which rebuilds in minutes after its first long build.
+
+## Open decision: what the engine starts from
+
+| | Helium | Plain Chromium plus picked privacy patches |
+|---|---|---|
+| License | GPL-3.0, so jaal must be GPL-3.0 | Chromium's BSD; jaal picks its own license |
+| Privacy work | Done for us (ungoogled-chromium plus Helium's own) | We take the patches we want from ungoogled-chromium (BSD) and keep them up to date |
+| Web Store and updates | Routed through Helium's servers, which Ardia turned off and sent straight to Google | Straight to Google, as Chrome does |
+| Upstreams to follow | Two (Chromium and Helium) | One |
+
+Leaning: plain Chromium plus picked patches.
 
 ## Order
 
-1. UI bake-off on prebuilt CEF ([bakeoff.md](bakeoff.md)). Mac first, then Windows.
-2. Engine: Helium plus the library patches, built on the Mac mini first, then on Depot.
-3. Rebuild the winning UI on our engine.
-4. The Arc features: spaces, pinned tabs, split view, command bar, sync.
-5. AI.
+1. **Bake-off** on prebuilt CEF. Done on the Mac; gpui-a is being ported to Windows so it can be tried there.
+2. **Engine**: Chromium plus the library patches. The first Mac build needs Xcode on the Mac mini.
+3. **gpui-a on the engine**: replace CEF.
+4. **Essentials, at least as good as Chrome and Helium** (checklist below).
+5. **Good UX**: sidebar, tab management, profiles, spaces, pinned tabs, folders.
+6. **Ship**: signed builds, auto-update, Windows installer.
+7. **Fix bugs** from real use.
+8. **AI.**
+
+## Essentials checklist
+
+Everything Chrome and Helium give a user. Most of it is Chrome's own code; our work is the UI around it.
+
+- Tabs and windows: new, close, reopen closed, drag between windows, private windows, session restore after a crash or restart.
+- Navigation: address bar with search and suggestions, back and forward, reload, find in page, zoom, print, the PDF viewer, view source, DevTools.
+- Data: history, bookmarks with import from Chrome and Arc, downloads with their prompts.
+- Passwords and autofill: save and fill passwords, passkeys, addresses and cards, password generation.
+- Extensions: the Web Store, toolbar icons and popups, side panel extensions, install and permission prompts, extension context-menu items.
+- Site controls: permission prompts (camera, mic, location, notifications), site settings, clearing cookies and data, HTTPS-first, pop-up blocking.
+- Media: picture in picture, fullscreen, media controls, autoplay rules.
+- Profiles, default browser, keyboard shortcuts, spellcheck, accessibility, memory and energy saving.
+- Content blocking at least as good as Helium's built-in uBlock Origin.
+
+Some Chrome features only work with Google's permission, so a small browser needs its own version:
+
+| Chrome feature | Why we can't just turn it on | Plan |
+|---|---|---|
+| Sync with a Google account | Google closed Chromium sync to other browsers in 2021 | Our own sync. Ardia uses encrypted files in your own iCloud Drive folder |
+| Netflix and other DRM video (Widevine) | Google licenses it per browser | Apply for the license; until then, Ardia's trick on the Mac: open those sites in Safari's engine |
+| Safe Browsing, Translate, Cast | Need Google API keys or deals | Look at what Brave and Vivaldi do |
 
 ## Research
 
