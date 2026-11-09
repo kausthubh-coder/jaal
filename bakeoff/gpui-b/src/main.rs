@@ -3,22 +3,39 @@
 //! GPUI draws, so the command bar is plain GPUI over the page in the same
 //! window (fix B). See docs/bakeoff.md.
 
+#[cfg(target_os = "macos")]
 mod browser;
+#[cfg(target_os = "macos")]
 mod command_bar;
+#[cfg(target_os = "macos")]
 mod demo;
+#[cfg(target_os = "macos")]
 mod page;
 
+#[cfg(target_os = "macos")]
 use browser::{BrowserHandle, BrowserWindow};
+#[cfg(target_os = "macos")]
 use gpui::{
     App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, point, prelude::*, px,
     size,
 };
+#[cfg(target_os = "macos")]
 use jaal_bakeoff_shared::bench::mark;
+#[cfg(target_os = "macos")]
 use jaal_bakeoff_shared::bench_modes as bench;
+#[cfg(target_os = "macos")]
 use jaal_gpui_cef::text_input;
+#[cfg(target_os = "macos")]
 use std::path::PathBuf;
 
+#[cfg(not(target_os = "macos"))]
+fn main() {
+    eprintln!("gpui-b runs on macOS only: it draws pages from shared IOSurfaces with Metal.");
+    std::process::exit(1);
+}
+
 /// `JAAL_PROFILE_DIR`, or `target/profiles/gpui-b` in the repo.
+#[cfg(target_os = "macos")]
 fn profile_dir() -> PathBuf {
     let dir = std::env::var_os("JAAL_PROFILE_DIR").map_or_else(
         || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/profiles/gpui-b"),
@@ -29,6 +46,7 @@ fn profile_dir() -> PathBuf {
     dir.canonicalize().expect("profile dir")
 }
 
+#[cfg(target_os = "macos")]
 fn main() {
     mark("main");
     let bench = bench::BenchConfig::from_env();

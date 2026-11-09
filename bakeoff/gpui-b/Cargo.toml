@@ -24,6 +24,10 @@ jaal-gpui-cef = { path = "../gpui-cef" }
 # runtime_shaders: this Mac has no full Xcode, so no offline Metal compiler.
 gpui = { version = "=0.2.2", default-features = false, features = ["runtime_shaders", "font-kit"] }
 futures = "0.3"
+
+# The page path is IOSurfaces and Metal, so gpui-b builds on macOS only. On
+# other platforms the binary just says so.
+[target.'cfg(target_os = "macos")'.dependencies]
 raw-window-handle = "0.6"
 objc2 = "0.6.3"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "objc2-core-foundation"] }

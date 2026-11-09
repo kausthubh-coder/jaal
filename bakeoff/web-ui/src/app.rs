@@ -34,6 +34,7 @@ const INITIAL_BOUNDS: Rect = Rect {
 const COMMAND_BAR_WIDTH: i32 = 600;
 const COMMAND_BAR_HEIGHT: i32 = 292;
 const COMMAND_BAR_TOP: i32 = 80;
+#[cfg(target_os = "macos")]
 const COMMAND_BAR_RADIUS: f64 = 14.0;
 /// Opaque, matching `--card` in `ui/command.html`.
 const COMMAND_BAR_BACKGROUND: u32 = 0xFF202126;
@@ -497,6 +498,7 @@ fn place_command_bar() {
 }
 
 pub fn show_command_bar(show: bool) {
+    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
     let (bar, view, page, window) = ui(|ui| {
         let page = ui
             .tabs
@@ -621,6 +623,8 @@ pub fn resize_window(width: i32) {
 }
 
 /// Presses a key like "cmd+k" or "enter" in our window. See `JAAL_PRESS_KEYS`.
+/// macOS only; elsewhere it does nothing.
+#[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
 pub fn press_key(key: &str) {
     let Some(window) = ui(|ui| ui.window.clone()) else {
         return;
@@ -819,6 +823,12 @@ wrap_client! {
     }
 }
 
+// The cef crate types the native key event per platform.
+#[cfg(target_os = "macos")]
+type NativeKeyEvent<'a> = *mut u8;
+#[cfg(target_os = "windows")]
+type NativeKeyEvent<'a> = Option<&'a mut sys::tagMSG>;
+
 wrap_keyboard_handler! {
     struct UiKeyboardHandler;
 
@@ -827,7 +837,7 @@ wrap_keyboard_handler! {
             &self,
             browser: Option<&mut Browser>,
             event: Option<&KeyEvent>,
-            _os_event: *mut u8,
+            _os_event: NativeKeyEvent<'_>,
             _is_keyboard_shortcut: Option<&mut i32>,
         ) -> i32 {
             event.is_some_and(|e| handle_key(browser, e)) as i32
