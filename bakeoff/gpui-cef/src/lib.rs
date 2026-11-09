@@ -1,7 +1,7 @@
-//! Glue between GPUI and windowed CEF on macOS, shared by the GPUI bake-off
-//! variants: the NSApp protocol patch, the external message pump, and CEF
-//! browsers hosted as native child views of a GPUI window. No variant UI
-//! lives here.
+//! Glue between GPUI and CEF on macOS, shared by the GPUI bake-off variants:
+//! the NSApp protocol patch, the external message pump, the CEF client, CEF
+//! browsers hosted as native child views of a GPUI window (gpui-a), and the
+//! text field both variants draw (GPUI ships none).
 //!
 //! Startup order matters, see `start`.
 
@@ -9,7 +9,9 @@
 
 pub mod gpui_patch;
 pub mod nsapp;
+pub mod posted_events;
 pub mod pump;
+pub mod text_input;
 
 use cef::*;
 use objc2::msg_send;
@@ -52,6 +54,13 @@ pub enum BrowserEvent {
     CommandKey {
         browser_id: i32,
         key: char,
+    },
+    /// The page wants a different mouse cursor. Windowed browsers set it
+    /// themselves when the handler returns false; windowless ones need the
+    /// UI to show it.
+    CursorChange {
+        browser_id: i32,
+        cursor: CursorType,
     },
 }
 
@@ -150,15 +159,26 @@ wrap_browser_process_handler! {
 /// A CEF client that turns the callbacks the bake-off needs into
 /// `BrowserEvent`s.
 pub fn client(handler: EventHandler) -> Client {
-    EventClient::new(handler)
+    EventClient::new(handler, None)
+}
+
+/// The same client for a windowless browser, which also needs a render
+/// handler: CEF asks it for the view size and hands it the painted frames.
+pub fn windowless_client(handler: EventHandler, render_handler: RenderHandler) -> Client {
+    EventClient::new(handler, Some(render_handler))
 }
 
 wrap_client! {
     struct EventClient {
         handler: EventHandler,
+        render_handler: Option<RenderHandler>,
     }
 
     impl Client {
+        fn render_handler(&self) -> Option<RenderHandler> {
+            self.render_handler.clone()
+        }
+
         fn display_handler(&self) -> Option<DisplayHandler> {
             Some(EventDisplayHandler::new(self.handler.clone()))
         }
@@ -199,6 +219,10 @@ wrap_display_handler! {
             (self.handler)(BrowserEvent::TitleChange { browser_id: browser_id(browser), title });
         }
 
+        fn on_cursor_change(&self, browser: Option<&mut Browser>, _cursor: *mut u8, type_: CursorType, _custom_cursor_info: Option<&CursorInfo>) -> ::std::os::raw::c_int {
+            (self.handler)(BrowserEvent::CursorChange { browser_id: browser_id(browser), cursor: type_ }) as i32
+        }
+
         fn on_console_message(&self, browser: Option<&mut Browser>, _level: LogSeverity, message: Option<&CefString>, _source: Option<&CefString>, _line: ::std::os::raw::c_int) -> ::std::os::raw::c_int {
             let message = message.map(CefString::to_string).unwrap_or_default();
             (self.handler)(BrowserEvent::Console { browser_id: browser_id(browser), message }) as i32
@@ -213,12 +237,19 @@ wrap_life_span_handler! {
 
     impl LifeSpanHandler {
         fn do_close(&self, browser: Option<&mut Browser>) -> ::std::os::raw::c_int {
-            // We own the window. Returning 0 lets CEF send performClose: to
-            // it, which closes the whole GPUI window for one tab. Returning 1
-            // means we destroy the browser's view ourselves: CEF calls
-            // on_before_close once that NSView is gone.
-            let view = browser.and_then(|b| b.host()).map(|h| h.window_handle());
-            if let Some(view) = view.filter(|v| !v.is_null()) {
+            // A windowless browser has no window or view to close, so CEF
+            // can go straight on to on_before_close. (Its window_handle is
+            // the parent view it was given, GPUI's, which must stay.)
+            let Some(host) = browser.and_then(|b| b.host()) else { return 0 };
+            if host.is_window_rendering_disabled() != 0 {
+                return 0;
+            }
+            // A windowed browser: we own the window. Returning 0 lets CEF
+            // send performClose: to it, which closes the whole GPUI window
+            // for one tab. Returning 1 means we destroy the browser's view
+            // ourselves: CEF calls on_before_close once that NSView is gone.
+            let view = host.window_handle();
+            if !view.is_null() {
                 unsafe {
                     let _: () = msg_send![view.cast::<AnyObject>(), removeFromSuperview];
                 }

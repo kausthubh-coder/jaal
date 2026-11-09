@@ -2,12 +2,10 @@
 //! native child views, and the command bar as a second window glued over
 //! the page (fix A). See docs/bakeoff.md.
 
-mod bench;
 mod browser;
 mod command_bar;
 mod demo;
 mod overlay;
-mod text_input;
 
 use browser::{BrowserHandle, BrowserWindow};
 use gpui::{
@@ -15,6 +13,8 @@ use gpui::{
     size,
 };
 use jaal_bakeoff_shared::bench::mark;
+use jaal_bakeoff_shared::bench_modes as bench;
+use jaal_gpui_cef::text_input;
 use std::path::PathBuf;
 
 /// `JAAL_PROFILE_DIR`, or `target/profiles/gpui-a` in the repo.

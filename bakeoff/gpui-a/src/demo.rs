@@ -7,18 +7,12 @@
 
 use crate::browser::BrowserWindow;
 use gpui::{AsyncWindowContext, WeakEntity};
+use jaal_gpui_cef::posted_events::{content_size, key_window, post_click, post_key, set_frame};
 use objc2::msg_send;
-use objc2::runtime::{AnyClass, AnyObject, Bool};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
-use std::ffi::CString;
 
 use std::time::Duration;
 
-const NS_EVENT_KEY_DOWN: usize = 10;
-const NS_EVENT_KEY_UP: usize = 11;
-const NS_EVENT_LEFT_MOUSE_DOWN: usize = 1;
-const NS_EVENT_LEFT_MOUSE_UP: usize = 2;
-const NS_COMMAND_KEY_MASK: usize = 1 << 20;
 const NS_FLOATING_WINDOW_LEVEL: isize = 3;
 
 pub fn enabled() -> bool {
@@ -269,93 +263,4 @@ fn print_state(this: &WeakEntity<BrowserWindow>, cx: &mut AsyncWindowContext, st
             b.sidebar_scroll_offset(),
         );
     });
-}
-
-unsafe fn key_window() -> *mut AnyObject {
-    unsafe {
-        let app: *mut AnyObject =
-            msg_send![AnyClass::get(c"NSApplication").unwrap(), sharedApplication];
-        msg_send![app, keyWindow]
-    }
-}
-
-unsafe fn content_size(window: *mut AnyObject) -> (f64, f64) {
-    unsafe {
-        let view: *mut AnyObject = msg_send![window, contentView];
-        let bounds: NSRect = msg_send![view, bounds];
-        (bounds.size.width, bounds.size.height)
-    }
-}
-
-unsafe fn set_frame(window: *mut AnyObject, f: impl FnOnce(NSRect) -> NSRect) {
-    unsafe {
-        let frame: NSRect = msg_send![window, frame];
-        let _: () = msg_send![window, setFrame: f(frame), display: Bool::YES];
-    }
-}
-
-unsafe fn post(event: *mut AnyObject) {
-    unsafe {
-        let app: *mut AnyObject =
-            msg_send![AnyClass::get(c"NSApplication").unwrap(), sharedApplication];
-        let _: () = msg_send![app, postEvent: event, atStart: Bool::NO];
-    }
-}
-
-unsafe fn ns_string(s: &str) -> *mut AnyObject {
-    let s = CString::new(s).unwrap();
-    unsafe { msg_send![AnyClass::get(c"NSString").unwrap(), stringWithUTF8String: s.as_ptr()] }
-}
-
-/// Posts a key down and up to `window`.
-unsafe fn post_key(window: *mut AnyObject, c: char, key_code: u16, command: bool) {
-    if window.is_null() {
-        eprintln!("DEMO no key window for key {c:?}");
-        return;
-    }
-    let flags = if command { NS_COMMAND_KEY_MASK } else { 0 };
-    unsafe {
-        let number: isize = msg_send![window, windowNumber];
-        let chars = ns_string(&c.to_string());
-        for kind in [NS_EVENT_KEY_DOWN, NS_EVENT_KEY_UP] {
-            let event: *mut AnyObject = msg_send![
-                AnyClass::get(c"NSEvent").unwrap(),
-                keyEventWithType: kind,
-                location: NSPoint::new(0., 0.),
-                modifierFlags: flags,
-                timestamp: 0f64,
-                windowNumber: number,
-                context: std::ptr::null_mut::<AnyObject>(),
-                characters: chars,
-                charactersIgnoringModifiers: chars,
-                isARepeat: Bool::NO,
-                keyCode: key_code
-            ];
-            post(event);
-        }
-    }
-}
-
-/// Posts a left click at `x, y` in the window's content, origin top left.
-unsafe fn post_click(window: *mut AnyObject, x: f64, y: f64) {
-    unsafe {
-        let number: isize = msg_send![window, windowNumber];
-        let (_, height) = content_size(window);
-        let location = NSPoint::new(x, height - y);
-        for kind in [NS_EVENT_LEFT_MOUSE_DOWN, NS_EVENT_LEFT_MOUSE_UP] {
-            let event: *mut AnyObject = msg_send![
-                AnyClass::get(c"NSEvent").unwrap(),
-                mouseEventWithType: kind,
-                location: location,
-                modifierFlags: 0usize,
-                timestamp: 0f64,
-                windowNumber: number,
-                context: std::ptr::null_mut::<AnyObject>(),
-                eventNumber: 0isize,
-                clickCount: 1isize,
-                pressure: 1f32
-            ];
-            post(event);
-        }
-    }
 }

@@ -7,6 +7,9 @@ publish.workspace = true
 
 [dependencies]
 cef.workspace = true
+# runtime_shaders: this Mac has no full Xcode, so no offline Metal compiler.
+gpui = { version = "=0.2.2", default-features = false, features = ["runtime_shaders", "font-kit"] }
+unicode-segmentation = "1.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.3"

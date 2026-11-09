@@ -2,10 +2,8 @@
 //! each tab is a CEF browser whose NSView sits over the page area. Only the
 //! active tab's view is visible.
 
-use crate::bench::{self, BenchConfig};
 use crate::command_bar::CommandBar;
 use crate::overlay;
-use crate::text_input::{TextInput, TextInputEvent};
 use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui::{
@@ -14,7 +12,9 @@ use gpui::{
     div, point, prelude::*, px, rgb, rgba, size, uniform_list,
 };
 use jaal_bakeoff_shared::bench::{mark, mark_at};
-use jaal_bakeoff_shared::{TabId, Tabs, fake_rows, test_page_url};
+use jaal_bakeoff_shared::bench_modes::{self as bench, BenchConfig};
+use jaal_bakeoff_shared::{TabId, Tabs, fake_rows, normalize_url, test_page_url};
+use jaal_gpui_cef::text_input::{TextInput, TextInputEvent};
 use jaal_gpui_cef::{BrowserEvent, ChildBrowser};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::cell::{Cell, RefCell};
@@ -252,7 +252,11 @@ impl BrowserWindow {
                 'q' => self.quit(cx),
                 _ => {}
             },
-            PageEvent::Browser(BrowserEvent::LoadEnd { .. } | BrowserEvent::Console { .. }) => {}
+            PageEvent::Browser(
+                BrowserEvent::LoadEnd { .. }
+                | BrowserEvent::Console { .. }
+                | BrowserEvent::CursorChange { .. },
+            ) => {}
         }
     }
 
@@ -712,62 +716,5 @@ impl Render for BrowserWindow {
 impl Focusable for BrowserWindow {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
-    }
-}
-
-/// What the URL field and command bar do with typed text: URLs and bare
-/// hosts load, anything else is a search.
-pub fn normalize_url(text: &str) -> Option<String> {
-    let text = text.trim();
-    if text.is_empty() {
-        return None;
-    }
-    if text.contains("://") || text.starts_with("about:") || text.starts_with("data:") {
-        return Some(text.to_string());
-    }
-    if !text.contains(' ') && (text.contains('.') || text.starts_with("localhost")) {
-        return Some(format!("https://{text}"));
-    }
-    let query: String = text
-        .bytes()
-        .map(|b| match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (b as char).to_string()
-            }
-            b' ' => "+".to_string(),
-            _ => format!("%{b:02X}"),
-        })
-        .collect();
-    Some(format!("https://duckduckgo.com/?q={query}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::normalize_url;
-
-    #[test]
-    fn full_urls_load_as_typed() {
-        assert_eq!(
-            normalize_url(" file:///tmp/a.html "),
-            Some("file:///tmp/a.html".into())
-        );
-        assert_eq!(normalize_url("about:blank"), Some("about:blank".into()));
-    }
-
-    #[test]
-    fn bare_hosts_get_https() {
-        assert_eq!(
-            normalize_url("docs.rs/gpui"),
-            Some("https://docs.rs/gpui".into())
-        );
-    }
-
-    #[test]
-    fn other_text_is_a_search() {
-        assert_eq!(
-            normalize_url("rust gpui & cef"),
-            Some("https://duckduckgo.com/?q=rust+gpui+%26+cef".into())
-        );
-        assert_eq!(normalize_url("   "), None);
     }
 }

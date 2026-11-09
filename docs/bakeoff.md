@@ -61,6 +61,8 @@ Marks go through `bakeoff/shared/src/bench.rs` and only when `JAAL_BENCH_LOG` na
 | `tab_switch_done` | The new page's second `requestAnimationFrame` after it became visible: the first runs as its first frame begins, the second once that frame is out. The page logs `performance.timeOrigin + performance.now()` to the console and the mark uses that time, so the trip back to the browser process doesn't count | Console handler |
 | `frame` | One per UI frame, only with `JAAL_BENCH_FRAMES=1` | Each GPUI render of the main window's root view. During the scroll and resize runs that is every display-link tick |
 
+gpui-b takes every mark at the same place as gpui-a (same function names in its `browser.rs` and `main.rs`). One difference to keep in mind when reading its tab switch numbers: in gpui-b the page's frame is a texture GPUI draws, so after `tab_switch_done` it still waits for GPUI's next render, about one display frame, before it is on screen. In gpui-a the page view puts the frame on screen itself. The mark leaves that frame out in both.
+
 Bench modes, set by environment variables:
 
 - `JAAL_BENCH_TABS=N`: open test pages 1 to N as tabs, tab 1 active. Mark `tabs_loaded`, then stay open until the harness quits the app.

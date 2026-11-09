@@ -886,6 +886,98 @@ fragment float4 surface_fragment(SurfaceFragmentInput input [[stage_in]],
   return ycbcrToRGBTransform * ycbcr;
 }
 
+// jaal: BGRA surfaces, such as Chromium's shared page textures. They are
+// sampled in place, cut to a rounded clip, and optionally blurred so the
+// same texture can be drawn again as the backdrop of something over it.
+struct BgraSurfaceVertexOutput {
+  float4 position [[position]];
+  float2 texture_position;
+  float4 clip [[flat]];
+  float4 corner_radii [[flat]];
+  float2 blur_extent [[flat]];
+  float clip_distance [[clip_distance]][4];
+};
+
+struct BgraSurfaceFragmentInput {
+  float4 position [[position]];
+  float2 texture_position;
+  float4 clip [[flat]];
+  float4 corner_radii [[flat]];
+  float2 blur_extent [[flat]];
+};
+
+vertex BgraSurfaceVertexOutput bgra_surface_vertex(
+    uint unit_vertex_id [[vertex_id]], uint surface_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(SurfaceInputIndex_Vertices)]],
+    constant SurfaceBounds *surfaces [[buffer(SurfaceInputIndex_Surfaces)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(SurfaceInputIndex_ViewportSize)]]) {
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  SurfaceBounds surface = surfaces[surface_id];
+  float4 device_position =
+      to_device_position(unit_vertex, surface.bounds, viewport_size);
+  float4 clip_distance = distance_from_clip_rect(unit_vertex, surface.bounds,
+                                                 surface.content_mask.bounds);
+  float2 bounds_size = float2(surface.bounds.size.width, surface.bounds.size.height);
+  return BgraSurfaceVertexOutput{
+      device_position,
+      unit_vertex,
+      float4(surface.clip.origin.x, surface.clip.origin.y,
+             surface.clip.size.width, surface.clip.size.height),
+      float4(surface.corner_radii.top_left, surface.corner_radii.top_right,
+             surface.corner_radii.bottom_right, surface.corner_radii.bottom_left),
+      // The blur radius in texture coordinates, so it stays the same on
+      // screen whatever the texture's size.
+      float2(surface.blur_radius) / bounds_size,
+      {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
+}
+
+fragment float4 bgra_surface_fragment(BgraSurfaceFragmentInput input [[stage_in]],
+                                      texture2d<float> texture
+                                      [[texture(SurfaceInputIndex_YTexture)]]) {
+  constexpr sampler texture_sampler(mag_filter::linear, min_filter::linear,
+                                    address::clamp_to_edge);
+  float4 color;
+  if (input.blur_extent.x > 0.0) {
+    // One pass of Gaussian blur (sigma is half the radius) by importance
+    // sampling: 96 taps on a golden-angle spiral whose rings are spaced so
+    // each tap carries equal weight. The spiral is rotated per pixel, which
+    // turns the gaps between taps into fine noise instead of a grid.
+    const int taps = 96;
+    float noise = fract(52.9829189 * fract(dot(input.position.xy,
+                                               float2(0.06711056, 0.00583715))));
+    float rotation = noise * 6.2831853;
+    float4 sum = float4(0.0);
+    float weight_sum = float(taps);
+    for (int i = 0; i < taps; i++) {
+      float u = (float(i) + 0.5) / float(taps);
+      // Distance in blur radii: the inverse of a sigma 0.5 Gaussian's
+      // radial distribution.
+      float r = 0.5 * sqrt(-2.0 * log(1.0 - u));
+      float theta = float(i) * 2.39996323 + rotation;
+      float2 offset = r * float2(cos(theta), sin(theta)) * input.blur_extent;
+      sum += texture.sample(texture_sampler, input.texture_position + offset);
+    }
+    color = sum / weight_sum;
+  } else {
+    color = texture.sample(texture_sampler, input.texture_position);
+  }
+
+  Bounds_ScaledPixels clip;
+  clip.origin.x = input.clip.x;
+  clip.origin.y = input.clip.y;
+  clip.size.width = input.clip.z;
+  clip.size.height = input.clip.w;
+  Corners_ScaledPixels corner_radii;
+  corner_radii.top_left = input.corner_radii.x;
+  corner_radii.top_right = input.corner_radii.y;
+  corner_radii.bottom_right = input.corner_radii.z;
+  corner_radii.bottom_left = input.corner_radii.w;
+  float distance = quad_sdf(input.position.xy, clip, corner_radii);
+  float alpha = saturate(0.5 - distance);
+  return float4(color.rgb, color.a * alpha);
+}
+
 float4 hsla_to_rgba(Hsla hsla) {
   float h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
   float s = hsla.s;

@@ -3179,17 +3179,49 @@ impl Window {
     /// This method should only be called as part of the paint phase of element drawing.
     #[cfg(target_os = "macos")]
     pub fn paint_surface(&mut self, bounds: Bounds<Pixels>, image_buffer: CVPixelBuffer) {
+        self.paint_surface_clipped(
+            bounds,
+            image_buffer,
+            bounds,
+            Corners::default(),
+            Pixels::ZERO,
+        );
+    }
+
+    /// jaal: paint a surface stretched over `bounds`, cut to the rounded
+    /// rectangle `clip` and blurred by `blur_radius` (zero for a sharp image).
+    /// Clip, corners and blur apply to `kCVPixelFormatType_32BGRA` buffers,
+    /// such as the IOSurfaces Chromium renders pages into; NV12 buffers draw
+    /// as `paint_surface` always did.
+    ///
+    /// Painting the same buffer again with `clip` set to a smaller box and a
+    /// blur radius gives a backdrop blur for something drawn over it.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    #[cfg(target_os = "macos")]
+    pub fn paint_surface_clipped(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        image_buffer: CVPixelBuffer,
+        clip: Bounds<Pixels>,
+        corner_radii: Corners<Pixels>,
+        blur_radius: Pixels,
+    ) {
         use crate::PaintSurface;
 
         self.invalidator.debug_assert_paint();
 
         let scale_factor = self.scale_factor();
-        let bounds = bounds.scale(scale_factor);
-        let content_mask = self.content_mask().scale(scale_factor);
+        let mut content_mask = self.content_mask();
+        // Only the clip is drawn, so don't rasterize the rest of `bounds`.
+        content_mask.bounds = content_mask.bounds.intersect(&clip);
         self.next_frame.scene.insert_primitive(PaintSurface {
             order: 0,
-            bounds,
-            content_mask,
+            bounds: bounds.scale(scale_factor),
+            content_mask: content_mask.scale(scale_factor),
+            clip: clip.scale(scale_factor),
+            corner_radii: corner_radii.scale(scale_factor),
+            blur_radius: blur_radius.scale(scale_factor),
             image_buffer,
         });
     }

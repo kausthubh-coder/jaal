@@ -658,6 +658,11 @@ pub(crate) struct PaintSurface {
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
+    // jaal: a BGRA surface is cut to this rounded rectangle and blurred by
+    // `blur_radius` (0 for none). NV12 surfaces ignore all three.
+    pub clip: Bounds<ScaledPixels>,
+    pub corner_radii: Corners<ScaledPixels>,
+    pub blur_radius: ScaledPixels,
     #[cfg(target_os = "macos")]
     pub image_buffer: core_video::pixel_buffer::CVPixelBuffer,
 }

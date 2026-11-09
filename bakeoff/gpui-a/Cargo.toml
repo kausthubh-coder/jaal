@@ -25,6 +25,5 @@ jaal-gpui-cef = { path = "../gpui-cef" }
 gpui = { version = "=0.2.2", default-features = false, features = ["runtime_shaders", "font-kit"] }
 futures = "0.3"
 raw-window-handle = "0.6"
-unicode-segmentation = "1.10"
 objc2 = "0.6.3"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "objc2-core-foundation"] }

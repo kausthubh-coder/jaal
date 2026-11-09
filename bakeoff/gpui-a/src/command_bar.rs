@@ -5,13 +5,13 @@
 
 use crate::browser::{BrowserHandle, BrowserWindow, CloseTab, NewTab, Quit, ToggleCommandBar};
 use crate::overlay;
-use crate::text_input::{TextInput, TextInputEvent};
 use gpui::{
     App, Bounds, Context, Entity, Focusable, Pixels, SharedString, Subscription, Window,
     WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, div, point,
     prelude::*, px, rgb, rgba, size,
 };
 use jaal_bakeoff_shared::TabId;
+use jaal_gpui_cef::text_input::{TextInput, TextInputEvent};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::ffi::c_void;
 

@@ -1998,8 +1998,6 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "979b45cfa6ec723b6f42330915a1b3769b930d02b2d505f9697f8ca602bee707"
 dependencies = [
  "anyhow",
  "async-task",
@@ -2083,7 +2081,23 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "raw-window-handle",
- "unicode-segmentation",
+]
+
+[[package]]
+name = "gpui-b"
+version = "0.1.0"
+dependencies = [
+ "cef",
+ "core-foundation 0.10.0",
+ "core-video",
+ "futures",
+ "gpui",
+ "io-surface",
+ "jaal-bakeoff-shared",
+ "jaal-gpui-cef",
+ "objc2",
+ "objc2-foundation",
+ "raw-window-handle",
 ]
 
 [[package]]
@@ -2735,8 +2749,10 @@ name = "jaal-gpui-cef"
 version = "0.1.0"
 dependencies = [
  "cef",
+ "gpui",
  "objc2",
  "objc2-foundation",
+ "unicode-segmentation",
 ]
 
 [[package]]

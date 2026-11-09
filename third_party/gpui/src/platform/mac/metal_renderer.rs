@@ -1,8 +1,8 @@
 use super::metal_atlas::MetalAtlas;
 use crate::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    AtlasTextureId, Background, Bounds, ContentMask, Corners, DevicePixels, MonochromeSprite,
+    PaintSurface, Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow,
+    Size, Surface, Underline, point, size,
 };
 use anyhow::Result;
 use block::ConcreteBlock;
@@ -14,8 +14,9 @@ use cocoa::{
 
 use core_foundation::base::TCFType;
 use core_video::{
-    metal_texture::CVMetalTextureGetTexture, metal_texture_cache::CVMetalTextureCache,
-    pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+    metal_texture::CVMetalTextureGetTexture,
+    metal_texture_cache::CVMetalTextureCache,
+    pixel_buffer::{kCVPixelFormatType_32BGRA, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange},
 };
 use foreign_types::{ForeignType, ForeignTypeRef};
 use metal::{
@@ -109,6 +110,8 @@ pub(crate) struct MetalRenderer {
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
     surfaces_pipeline_state: metal::RenderPipelineState,
+    // jaal: BGRA surfaces (Chromium's shared page textures).
+    bgra_surfaces_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
@@ -248,6 +251,14 @@ impl MetalRenderer {
             "surface_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
+        let bgra_surfaces_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "bgra_surfaces",
+            "bgra_surface_vertex",
+            "bgra_surface_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
 
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone()));
@@ -267,6 +278,7 @@ impl MetalRenderer {
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
             surfaces_pipeline_state,
+            bgra_surfaces_pipeline_state,
             unit_vertices,
             instance_buffer_pool,
             sprite_atlas,
@@ -1064,22 +1076,37 @@ impl MetalRenderer {
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
     ) -> bool {
-        command_encoder.set_render_pipeline_state(&self.surfaces_pipeline_state);
-        command_encoder.set_vertex_buffer(
-            SurfaceInputIndex::Vertices as u64,
-            Some(&self.unit_vertices),
-            0,
-        );
-        command_encoder.set_vertex_bytes(
-            SurfaceInputIndex::ViewportSize as u64,
-            mem::size_of_val(&viewport_size) as u64,
-            &viewport_size as *const Size<DevicePixels> as *const _,
-        );
-
+        // jaal: the pipeline is set per surface, since BGRA and NV12 differ.
         for surface in surfaces {
             let texture_size = size(
                 DevicePixels::from(surface.image_buffer.get_width() as i32),
                 DevicePixels::from(surface.image_buffer.get_height() as i32),
+            );
+
+            // jaal: BGRA buffers take their own pipeline, one texture.
+            if surface.image_buffer.get_pixel_format() == kCVPixelFormatType_32BGRA {
+                if !self.draw_bgra_surface(
+                    surface,
+                    texture_size,
+                    instance_buffer,
+                    instance_offset,
+                    viewport_size,
+                    command_encoder,
+                ) {
+                    return false;
+                }
+                continue;
+            }
+            command_encoder.set_render_pipeline_state(&self.surfaces_pipeline_state);
+            command_encoder.set_vertex_buffer(
+                SurfaceInputIndex::Vertices as u64,
+                Some(&self.unit_vertices),
+                0,
+            );
+            command_encoder.set_vertex_bytes(
+                SurfaceInputIndex::ViewportSize as u64,
+                mem::size_of_val(&viewport_size) as u64,
+                &viewport_size as *const Size<DevicePixels> as *const _,
             );
 
             assert_eq!(
@@ -1140,19 +1167,87 @@ impl MetalRenderer {
                 let buffer_contents = (instance_buffer.metal_buffer.contents() as *mut u8)
                     .add(*instance_offset)
                     as *mut SurfaceBounds;
-                ptr::write(
-                    buffer_contents,
-                    SurfaceBounds {
-                        bounds: surface.bounds,
-                        content_mask: surface.content_mask.clone(),
-                    },
-                );
+                ptr::write(buffer_contents, surface_bounds(surface));
             }
 
             command_encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
             *instance_offset = next_offset;
         }
         true
+    }
+
+    /// jaal: one BGRA surface (a shared IOSurface), cut to its rounded clip
+    /// and optionally blurred, sampled in place with no copy.
+    fn draw_bgra_surface(
+        &mut self,
+        surface: &PaintSurface,
+        texture_size: Size<DevicePixels>,
+        instance_buffer: &mut InstanceBuffer,
+        instance_offset: &mut usize,
+        viewport_size: Size<DevicePixels>,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) -> bool {
+        let Ok(texture) = self.core_video_texture_cache.create_texture_from_image(
+            surface.image_buffer.as_concrete_TypeRef(),
+            None,
+            MTLPixelFormat::BGRA8Unorm,
+            surface.image_buffer.get_width(),
+            surface.image_buffer.get_height(),
+            0,
+        ) else {
+            log::error!("could not make a Metal texture from a BGRA surface");
+            return true;
+        };
+
+        align_offset(instance_offset);
+        let next_offset = *instance_offset + mem::size_of::<SurfaceBounds>();
+        if next_offset > instance_buffer.size {
+            return false;
+        }
+
+        command_encoder.set_render_pipeline_state(&self.bgra_surfaces_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            SurfaceInputIndex::Vertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_bytes(
+            SurfaceInputIndex::ViewportSize as u64,
+            mem::size_of_val(&viewport_size) as u64,
+            &viewport_size as *const Size<DevicePixels> as *const _,
+        );
+        command_encoder.set_vertex_buffer(
+            SurfaceInputIndex::Surfaces as u64,
+            Some(&instance_buffer.metal_buffer),
+            *instance_offset as u64,
+        );
+        command_encoder.set_vertex_bytes(
+            SurfaceInputIndex::TextureSize as u64,
+            mem::size_of_val(&texture_size) as u64,
+            &texture_size as *const Size<DevicePixels> as *const _,
+        );
+        command_encoder.set_fragment_texture(SurfaceInputIndex::YTexture as u64, unsafe {
+            let texture = CVMetalTextureGetTexture(texture.as_concrete_TypeRef());
+            Some(metal::TextureRef::from_ptr(texture as *mut _))
+        });
+        unsafe {
+            let buffer_contents = (instance_buffer.metal_buffer.contents() as *mut u8)
+                .add(*instance_offset) as *mut SurfaceBounds;
+            ptr::write(buffer_contents, surface_bounds(surface));
+        }
+        command_encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, 6);
+        *instance_offset = next_offset;
+        true
+    }
+}
+
+fn surface_bounds(surface: &PaintSurface) -> SurfaceBounds {
+    SurfaceBounds {
+        bounds: surface.bounds,
+        content_mask: surface.content_mask.clone(),
+        clip: surface.clip,
+        corner_radii: surface.corner_radii.clone(),
+        blur_radius: surface.blur_radius,
     }
 }
 
@@ -1352,4 +1447,8 @@ pub struct PathSprite {
 pub struct SurfaceBounds {
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
+    // jaal: see `PaintSurface`.
+    pub clip: Bounds<ScaledPixels>,
+    pub corner_radii: Corners<ScaledPixels>,
+    pub blur_radius: ScaledPixels,
 }

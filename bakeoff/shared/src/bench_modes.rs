@@ -1,7 +1,8 @@
-//! The bench modes from docs/bakeoff.md ("How marks are taken"). Marks go
-//! through `jaal_bakeoff_shared::bench`; this file only decides what to do.
+//! The bench modes from docs/bakeoff.md ("How marks are taken"), read from
+//! the environment. Marks go through `bench`; this file only decides what to
+//! do, the same way in every variant.
 
-use jaal_bakeoff_shared::test_page_url;
+use crate::test_page_url;
 use std::time::Duration;
 
 /// How long the scroll and resize runs last.
