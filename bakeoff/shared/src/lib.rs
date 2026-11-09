@@ -4,6 +4,7 @@
 use std::path::{Path, PathBuf};
 
 pub mod bench;
+pub mod bench_modes;
 
 /// One row in the sidebar.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,6 +128,32 @@ pub fn test_page_url(n: usize) -> String {
     format!("file://{}", path.display())
 }
 
+/// What the URL field and command bar do with typed text: URLs and bare
+/// hosts load, anything else is a search. Every variant uses it.
+pub fn normalize_url(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    if text.contains("://") || text.starts_with("about:") || text.starts_with("data:") {
+        return Some(text.to_string());
+    }
+    if !text.contains(' ') && (text.contains('.') || text.starts_with("localhost")) {
+        return Some(format!("https://{text}"));
+    }
+    let query: String = text
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            b' ' => "+".to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect();
+    Some(format!("https://duckduckgo.com/?q={query}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +216,31 @@ mod tests {
             let path = url.trim_start_matches("file://");
             assert!(Path::new(path).is_file(), "missing {path}");
         }
+    }
+
+    #[test]
+    fn full_urls_load_as_typed() {
+        assert_eq!(
+            normalize_url(" file:///tmp/a.html "),
+            Some("file:///tmp/a.html".into())
+        );
+        assert_eq!(normalize_url("about:blank"), Some("about:blank".into()));
+    }
+
+    #[test]
+    fn bare_hosts_get_https() {
+        assert_eq!(
+            normalize_url("docs.rs/gpui"),
+            Some("https://docs.rs/gpui".into())
+        );
+    }
+
+    #[test]
+    fn other_text_is_a_search() {
+        assert_eq!(
+            normalize_url("rust gpui & cef"),
+            Some("https://duckduckgo.com/?q=rust+gpui+%26+cef".into())
+        );
+        assert_eq!(normalize_url("   "), None);
     }
 }
