@@ -1,0 +1,10 @@
+[package]
+name = "jaal-engine"
+version = "0.1.0"
+description = "Safe Rust API over the jaal engine's C API (engine/public/jaal_engine.h)"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+jaal-engine-sys = { path = "../jaal-engine-sys" }
