@@ -22,7 +22,7 @@ Decided on 2026-11-09: plain Chromium plus picked patches. jaal's own license ca
 ## Order
 
 1. **Bake-off** on prebuilt CEF. Done on the Mac; gpui-a is being ported to Windows so it can be tried there.
-2. **Engine**: plain Chromium plus picked privacy patches and the library patches ([engine.md](engine.md)). Engine work happens on the Windows laptop, Windows first; Depot builds Mac.
+2. **Engine**: plain Chromium plus picked privacy patches and the library patches ([engine.md](engine.md)). Decided on 2026-11-09: the whole app is built on Windows first, on the laptop. Every engine milestone passes on Windows, and the Mac is one port milestone after them, built by Depot.
 3. **gpui-a on the engine**: replace CEF.
 4. **Essentials, at least as good as Chrome and Helium** (checklist below).
 5. **Good UX**: sidebar, tab management, profiles, spaces, pinned tabs, folders.

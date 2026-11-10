@@ -1,0 +1,31 @@
+diff --git a/chrome/browser/ui/webui_browser/webui_browser_ui.cc b/chrome/browser/ui/webui_browser/webui_browser_ui.cc
+index 6c1b039..28e1c10 100644
+--- a/chrome/browser/ui/webui_browser/webui_browser_ui.cc
++++ b/chrome/browser/ui/webui_browser/webui_browser_ui.cc
+@@ -7,6 +7,7 @@
+ #include <array>
+ 
+ #include "base/containers/to_vector.h"
++#include "base/feature_list.h"
+ #include "base/notimplemented.h"
+ #include "chrome/browser/bookmarks/bookmark_model_factory.h"
+ #include "chrome/browser/contextual_search/contextual_search_service_factory.h"
+@@ -31,6 +32,7 @@
+ #include "chrome/browser/ui/webui_browser/webui_browser_page_handler.h"
+ #include "chrome/browser/ui/webui_browser/webui_browser_side_panel_ui.h"
+ #include "chrome/browser/ui/webui_browser/webui_browser_window.h"
++#include "chrome/common/chrome_features.h"
+ #include "chrome/common/webui_url_constants.h"
+ #include "chrome/grit/branded_strings.h"
+ #include "chrome/grit/generated_resources.h"
+@@ -89,7 +91,9 @@ WebUIBrowserUIConfig::WebUIBrowserUIConfig()
+ 
+ bool WebUIBrowserUIConfig::IsWebUIEnabled(
+     content::BrowserContext* browser_context) {
+-  return webui_browser::IsWebUIBrowserEnabled();
++  // jaal: the flag, not IsWebUIBrowserEnabled(), which jaal answers without
++  // it. This page needs Webium's own window and crashes the browser in ours.
++  return base::FeatureList::IsEnabled(features::kWebium);
+ }
+ 
+ // realbox uses ui/webui/resources/js/metrics_reporter, which in turn uses

@@ -1,6 +1,6 @@
 # Engine plan
 
-The engine is Chromium plus our patches, built as a library that gpui-a hosts instead of CEF. This is the plan for it. M0 and M1 have passed on Windows; the rest isn't built yet.
+The engine is Chromium plus our patches, built as a library that gpui-a hosts instead of CEF. This is the plan for it. M0, M1 and M2 have passed on Windows; the rest isn't built yet.
 
 It merges two plans written separately on 2026-11-09 from the same brief, one by Claude Fable and one by GPT Astra: [Fable's](research/2026-11-09-engine-plan-fable.md) and [Astra's](research/2026-11-09-engine-plan-astra.md). Those two files carry the file and line citations behind each choice. Where the two plans disagreed, the last section says what we picked and why. Chromium paths below are from 156.0.8078.88.
 
@@ -11,7 +11,7 @@ It merges two plans written separately on 2026-11-09 from the same brief, one by
 - Each top-level window is a Chrome `views::Widget`. GPUI draws the sidebar inside it, each page is a `views::WebView` next to it, and the command bar and other overlays stay see-through child windows (fix A).
 - The app talks to the engine through one C header, `jaal_engine.h`, wrapped by two Rust crates. Every call runs on Chromium's UI thread, which is the main thread. GPUI runs on that thread inside Chromium's loop.
 - The executable is Chrome's own launcher, renamed. The Rust UI is a library (`jaal_ui.dll`, `libjaal_ui.dylib`) that the engine loads in the browser process.
-- Engine work happens on the Windows laptop, Windows first. Mac builds run on Depot, because Chromium can't build a Mac version on Windows.
+- Every milestone passes on Windows first, on the Windows laptop. The Mac is one port milestone after them. Its builds will run on Depot, because Chromium can't build a Mac version on Windows.
 - How often we rebase onto new Chrome versions is decided when jaal is first published.
 
 ## Why a layer inside `chrome/`
@@ -26,15 +26,31 @@ It merges two plans written separately on 2026-11-09 from the same brief, one by
 
 Webium matters because `BrowserWindow` has 74 pure virtual methods and Chrome's own `BrowserView` is 6,191 lines. `WebUIBrowserWindow` already implements that interface with a widget, a web view, a tab-modal dialog host, an exclusive-access context (fullscreen and pointer lock) and a stub location bar. Fifteen files in `chrome/` already skip `BrowserView` work when Webium is on. Ardia had to write a hook for each of these spots by hand.
 
-We don't turn the flag on, because it does more than skip `BrowserView` work:
+We don't turn the flag on, because it also adds `WebUIBrowserRendererExtension` to every frame of every page (`chrome/renderer/chrome_content_renderer_client.cc:848`). That is code in every renderer we don't need, and it is the only place that reads the flag itself.
 
-- It adds `WebUIBrowserRendererExtension` to every frame of every page (`chrome/renderer/chrome_content_renderer_client.cc:848`). That is code in every renderer we don't need.
-- It turns off Chrome's sad-tab page (`chrome/browser/ui/tabs/tab_features.cc:646`).
-- It makes Chrome create a `WebUIBrowserWindow` for every normal window (`chrome/browser/ui/views/frame/browser_window_factory.cc:35`), which we replace anyway.
+The browser-side guards all ask one function, `webui_browser::IsWebUIBrowserEnabled()` (`chrome/browser/ui/webui_browser/webui_browser.cc:17`). One hook makes it return true in jaal's browser process while the flag stays off, so we get the guards without the renderer add-on.
 
-The browser-side guards all ask one function, `webui_browser::IsWebUIBrowserEnabled()` (`chrome/browser/ui/webui_browser/webui_browser.cc:17`). One hook makes it return true in jaal's browser process while the flag stays off, so we get the guards without the renderer add-on. We show our own crash page from the `tab_crashed` event.
+Webium is an experiment, so Google can move or reshape it. Our window is our own class in our own folder, and it copies or reuses Webium's helper classes (modal dialog host, exclusive-access context, find-bar owner). A move costs us include paths.
 
-Webium is an experiment, so Google can move or reshape it. Our window is our own class in our own folder, and it copies or reuses Webium's helper classes (modal dialog host, exclusive-access context, find-bar owner). A move costs us include paths. Milestone M2 audits every caller of `IsWebUIBrowserEnabled()` for side effects we don't want.
+### Webium audit (M2)
+
+Every caller of `IsWebUIBrowserEnabled()` in 156.0.8078.88, and what it does in jaal now that the answer is true:
+
+| Caller | With the answer true | Do we want it? |
+|---|---|---|
+| `chrome/browser/ui/views/frame/browser_window_factory.cc:45` | Makes a `WebUIBrowserWindow` for a normal window | Never reached for normal windows: our hook answers first, four lines up |
+| `chrome/browser/ui/browser_window/internal/browser_window_features.cc:352` | Gives a normal window Webium's element tracker (`BrowserElementsWebUiBrowser`) instead of the Views one | Yes. The Views one needs a `BrowserView`. Our window hands it its widget |
+| `chrome/browser/ui/tabs/tab_features.cc:646` | No `SadTabHelper`: a crashed tab shows nothing from Chrome | Yes, by plan: the app draws its own crash page. **Open** until the `tab_crashed` event exists (M4); until then a crashed tab is blank |
+| `chrome/browser/ui/views/side_panel/side_panel_helper.cc:38` | Registers only the reading list and bookmarks side panels | Neutral. jaal has no Chrome side panel; extension side panels come in M5 |
+| `chrome/browser/ui/toasts/toast_controller.cc:326` | With no anchor view, a toast is dropped instead of hitting a test-only CHECK | Yes. Toasts are the app's to draw (M6) |
+| `chrome/browser/ui/read_anything/read_anything_side_panel_controller.cc:246` | With no side panel UI, returns instead of hitting a test-only CHECK | Yes |
+| `chrome/browser/ui/browser_tabrestore.cc:125` | Skips two debug checks on the contents size of a restored tab | Yes. They assume `BrowserView`'s layout |
+| `chrome/browser/ui/webui/new_tab_page/new_tab_page_handler.cc:871` and `:1200`, `chrome/browser/ui/webui/side_panel/customize_chrome/customize_chrome_page_handler.cc:550` | Skip the new tab page's footer, whose controller needs a `BrowserView` | Yes |
+| `chrome/browser/ui/webui/side_panel/reading_list/reading_list_ui.cc:70` | Tells the reading list page it is in a WebUI browser | Neutral. Nothing shows that page yet |
+| `chrome/browser/chrome_browser_interface_binders_webui_parts_desktop.cc:635` | Registers Mojo interfaces for Webium's own page, `chrome://webui-browser` | Harmless: the page can't load (next row) |
+| `chrome/browser/ui/webui_browser/webui_browser_ui.cc:92` | Made `chrome://webui-browser` loadable. Opening it in a jaal tab crashed the browser, because the page expects Webium's own window | **No. Fixed** by `webui-browser-page-flag-only.patch`: this one check reads the flag itself. The acceptance run opens the page as a tab |
+| `chrome/browser/ui/webui_browser/webui_browser.cc:26` (`IsBrowserUIWebContents`) | Asks whether a page is Webium's UI page | Answers false for every jaal page, because none belongs to a `WebUIBrowserWindow` |
+| `chrome/browser/sessions/session_restore.cc:859` | Text of a ChromeOS-only CHECK message | Not built on Windows or the Mac |
 
 ## Process and startup
 
@@ -57,7 +73,7 @@ GPUI needs an embedded mode in our fork (`third_party/gpui`, recorded in `JAAL.m
 
 - On both OSes, setup is split from the loop. GPUI's Windows `run()` also starts its vsync thread before `GetMessageW` (`third_party/gpui/src/platform/windows/platform.rs:308`), so embedded start has to do that setup without entering the loop.
 - On the Mac, Chromium registers `BrowserCrApplication` as the app class and checks it. Our fork deletes GPUIApplication and the code that registers it. GPUI's per-app pointer becomes a plain global. Activation, open-URL, reopen and quit reach GPUI through a stand-in for Chrome's `AppController`, which Ardia also needed.
-- On Windows, Chromium's message pump already delivers GPUI's window messages. Nothing else changes.
+- On Windows, Chromium's message pump already delivers GPUI's window messages. It also calls `TranslateMessage` on every one, which GPUI's own loop never does, so in embedded mode GPUI must not translate keys itself, or every typed character arrives twice. The rest of the list is in `third_party/gpui/JAAL.md`.
 - The bake-off's `pump.rs`, the `nsapp.rs` protocol patch and the CEF loader are not used by the engine build.
 
 Quitting has one path for the close button, Cmd+Q or Ctrl+Q, the Dock, OS logout and the API. A page's beforeunload or a running download can cancel it. The keep-alive drops only after the quit is committed.
@@ -65,16 +81,35 @@ Quitting has one path for the close button, Cmd+Q or Ctrl+Q, the Dock, OS logout
 ## Windows, pages and overlays
 
 - **Mac.** The window is a Views `NSWindow`. Its content view holds GPUI's Metal view and the page area, which Views hosts with `NativeViewHostMac`. Hit-testing asks GPUI's view first. Ardia needed about 20 lines for that.
-- **Windows.** The window is a Views HWND. GPUI renders into a `WS_CHILD` HWND inside it. A page is an Aura window inside Views, not an HWND (`ui/gfx/native_ui_types.h:123`), so the app never gets a page handle.
+- **Windows.** The window is a Views HWND. GPUI renders into `WS_CHILD` HWNDs inside it: the app makes a GPUI window and hands its HWND to the engine (`window_attach_view`), which makes it a child, places it on every layout pass, and keeps it above Chrome's own child windows. A page is an Aura window inside Views, not an HWND (`ui/gfx/native_ui_types.h:123`), so the app never gets a page handle.
 - **Pages.** The app gives rectangles: the page rect and the docked DevTools rect. A tab switch is `views::WebView::SetWebContents` on one web view per window, Chrome's own path. If that is slower than the bake-off's 26.9 ms switch, M3 tries one web view per tab.
 
 This changes one thing from the bake-off, where GPUI created the window and the page was a child view in it. Chrome's dropdowns and dialogs find their parent through Views (`ui/views/widget/native_widget_mac.mm:277-308`). A window GPUI created gives them nothing to attach to, so autofill, passkeys, print preview and HTTP auth would each need a patch. Ardia picked a Views window for the same reason. The rest of what the bake-off measured stays: GPUI draws one Metal or DirectX surface, the page is Chrome's native view beside it, and overlays are child windows.
 
-Two things are unverified on Windows: whether GPUI's DirectComposition surface works in a child HWND, and whether system blur applies to a child window. M2 tests both first. The fallback is the bake-off layout, where GPUI owns the HWND and the page is a child Views widget. It needs one patch like CEF's "external parent" patch, because stock Views only accepts an Aura parent.
+### The Windows layout, decided in M2
 
-Overlays stay fix A. On the Mac the command bar is a child `NSPanel`. On Windows it is an owned, layered `WS_POPUP` that follows the main window's `WM_MOVE` and `WM_SIZE` and has no taskbar entry. A security prompt closes any GPUI overlay that would cover it.
+M2 tested the two things that were unverified, in the real engine window on Windows 11 build 26200, before building on them ([results](../bakeoff/results/2026-11-10-m2-windows.md)):
 
-Keys: the engine asks the app first about reserved shortcuts (Cmd+T, Cmd+W, Cmd+L and their Ctrl versions) through `BrowserWindow::PreHandleKeyboardEvent`. Everything else goes to the page first, and keys the page leaves come back to the app.
+| Question | Answer | What showed it |
+|---|---|---|
+| Does GPUI's DirectComposition surface work in a child HWND of the Views window? | Yes, opaque or see-through, above Chrome's own compositor window | [m2-layout-test-child-hwnd.png](../bakeoff/results/screens/m2-layout-test-child-hwnd.png), [m2-layout-test-see-through-child.png](../bakeoff/results/screens/m2-layout-test-see-through-child.png) |
+| Does system blur apply to the command bar's window? | No | The accent policy GPUI asks for draws solid black, for GPUI's pop-up and for a plain Win32 window alike, in a GDI screen copy and through Desktop Duplication. Windows 11's own backdrop gave a flat fill over a striped page: [m2-layout-test-system-blur.png](../bakeoff/results/screens/m2-layout-test-system-blur.png) |
+
+So the plan's layout stands and the fallback (GPUI owns the HWND, the page is a child Views widget) is not needed. What changed is the overlay:
+
+- **Overlays are see-through child windows too**, not owned pop-ups. A child follows the main window with no code, can't get a taskbar entry, and never takes activation from the main window. Its limit is that it can't reach past the main window's edge.
+- **The engine blurs the page under an overlay.** `window_attach_view` takes a blur radius and an inset; the engine puts a layer with a background blur in Chrome's compositor, above the page and under the app's window. The app's window is larger than the bar by the inset, so GPUI draws the bar's shadow itself.
+- A security prompt still closes any GPUI overlay that would cover it. Not built yet.
+
+Three things a child HWND needs that a top-level window gets for free, all found in M2:
+
+- **Focus.** Windows leaves keyboard focus on a child when the user clicks its already-active parent, so the engine takes focus back on a mouse press on the page. Chrome's text input (TSF) is bound to the thread, not the window, so the engine blurs Chrome's input method while one of the app's views has focus.
+- **The wheel.** Windows sends the mouse wheel to the window with keyboard focus, not the one under the pointer. The engine hands a wheel over one of the app's views to that view, and a GPUI child passes a wheel that is not over it back up.
+- **Re-entry.** Moving a child HWND sends it `WM_SIZE` at once, and GPUI can't be re-entered while it is inside one of its own updates. So the engine never touches the app's windows from inside an API call: it waits for the next task. A resize by the user places them in the same layout pass as the page.
+
+The window itself has no system title bar (`window_create_with`, `frameless`): the engine gives the title bar's height back to the client area and keeps the sizing borders, so resizing, snapping, the shadow and Windows 11's rounded corners stay. The app draws the three window buttons and starts a drag with `window_begin_drag`.
+
+Keys: the engine asks the app first about reserved shortcuts (Ctrl+T, Ctrl+W, Ctrl+L; Cmd on the Mac) through `BrowserWindow::PreHandleKeyboardEvent`. Everything else goes to the page first, and keys the page leaves come back to the app. Both arrive as `key` events.
 
 ### Who draws what
 
@@ -132,6 +167,8 @@ Rules:
 
 Profiles start simple: one profile per window, with private windows separate.
 
+Built so far (ABI 1.1): the engine, window and tab calls of M1, and M2's page placement, the app's views (`window_attach_view`, `window_update_view`, `window_detach_view`), `window_focus_page`, `window_set_state`, `window_create_with`, `window_set_style`, `window_begin_drag`, `tab_navigate` and `set_shortcut_filter`, with the `key` and `window_state` events. Placements work like CSS absolute positioning (edges and sizes in DIPs), and the engine applies them again on every resize, so the app never chases the window.
+
 ## Where the code lives
 
 The engine's source goes in this repo under `engine/`. The Chromium checkout stays outside the repo (`C:\src\chromium` on the laptop), and scripts recreate it from the lock file. One PR can change the C header and the Rust wrapper together, and UI agents never need the checkout.
@@ -152,12 +189,13 @@ engine/
 crates/jaal-engine-sys/    bindgen output
 crates/jaal-engine/        safe Rust API
 crates/jaal-ui-hello/      the M1 test UI: one window, one tab
+crates/jaal-ui/            the UI on GPUI: sidebar and command bar (jaal_ui.dll)
 ```
 
 Rules:
 
 - Hooks are `g_jaal_*` function pointers declared in one header, `hooks.h`. A null hook means stock Chrome. Chrome's file and our layer both include the header, so a changed signature fails to compile.
-- New behaviour lives in our folders. Chrome's own files get hooks and nothing more.
+- New behaviour lives in our folders. Chrome's own files get hooks, and a guard where Chrome would otherwise do something wrong for jaal (one so far, from the Webium audit).
 - One ordered patch series. A patch that needs fuzz to apply fails the step.
 - `scripts/check` applies the series to a clean copy and byte-compares every touched file with the tree we built. CI runs it on every engine PR.
 - Binary files are replaced by path, never patched.
@@ -220,20 +258,21 @@ Features that need someone else's permission are tracked one by one, and each bl
 |---|---|---|
 | M0 | Plain Chromium builds | **Windows passed 2026-11-09** ([results](../bakeoff/results/2026-11-09-m0-windows.md)): the laptop's `chrome` build opens a local test page with the sandbox on and exits cleanly, with a screenshot. Still open: Depot builds the same for Mac, and it runs on the Mac mini |
 | M1 | Library bootstrap, on Windows | **Windows passed 2026-11-09** ([results](../bakeoff/results/2026-11-09-m1-windows.md)), with Chrome's file names kept for now. `JaalMainDelegate`, the `IsWebUIBrowserEnabled()` hook, the exe and engine and UI library layout, and a 50-line Rust UI library that opens one window and one tab through the C API. The window has no Chrome toolbar or tab strip, helper processes never load the UI library, a wrong ABI is refused before any profile opens, and quit and cancelled quit both work |
-| M2 | GPUI inside the engine on both OSes | The 5,000-row sidebar renders in our window on Mac and Windows. Page input, IME, shortcuts, a file picker and a tab-modal dialog work. The command bar draws over the page with blur and shadow. Moving, resizing, minimizing, fullscreen and mixed DPI keep everything in place. A stack sample shows Chromium's pump, not GPUI's loop. If Windows fails here, we switch to the fallback layout and say so |
-| M3 | gpui-a on the engine | Every bake-off feature works on Windows, then Mac. Over 5 runs on the same machine, medians are within 10% of gpui-a on CEF. On the Mac that means start ≤ 416 ms, footprint ≤ 576 MB, switch ≤ 30 ms, scroll dropped ≤ 1, resize dropped ≤ 7, idle CPU ≤ 2.3% (from `bakeoff/results/2026-11-09-Mac.md`). Windows has no CEF numbers yet, so the laptop measures gpui-a on CEF first (branch `windows/gpui-a`). The CEF build stays as a comparison |
+| M2 | GPUI inside the engine, on Windows | **Windows passed 2026-11-10** ([results](../bakeoff/results/2026-11-10-m2-windows.md)); IME and mixed DPI are not checked, since the laptop has neither an IME nor a second monitor. The 5,000-row sidebar renders in our window. Page input, shortcuts, a file picker and a tab-modal dialog work. The command bar draws over the page with blur and shadow. Moving, resizing, minimizing, maximizing and fullscreen keep everything in place. A stack sample shows Chromium's pump, not GPUI's loop. The child-HWND layout held, so the fallback is not needed |
+| M3 | gpui-a on the engine | Every bake-off feature works on Windows. Over 5 runs on the same machine, medians are within 10% of gpui-a on CEF. Windows has no CEF numbers yet, so the laptop measures gpui-a on CEF first. The CEF build stays as a comparison. (The Mac's bar, for its port: start ≤ 416 ms, footprint ≤ 576 MB, switch ≤ 30 ms, scroll dropped ≤ 1, resize dropped ≤ 7, idle CPU ≤ 2.3%, from `bakeoff/results/2026-11-09-Mac.md`) |
 | M4 | Lifecycle | `window.open`, `target=_blank`, Cmd-click and a POST form all arrive as tabs with their opener. Beforeunload cancels a close and a quit. A renderer crash leaves the browser up. Session restore and private windows work, and an extension's `chrome.windows.getAll` lists exactly our windows and tabs |
-| M5 | Extensions | See "Extensions that must work" below. Every check passes on Windows and Mac |
-| M6 | Essentials | Every row of the essentials checklist in `plan.md` has a check and a screenshot per OS, or a written reason it waits |
+| M5 | Extensions | See "Extensions that must work" below. Every check passes on Windows |
+| M6 | Essentials | Every row of the essentials checklist in `plan.md` has a check and a screenshot, or a written reason it waits |
 | M7 | Privacy and content blocking | The privacy series replays without fuzz. An idle profile sends no unwanted Google traffic. uBlock Origin matches Helium on a blocking test set |
 | M8 | Performance | Release builds against gpui-a on CEF, Chrome and Helium. 5 runs each, median and spread, same machine, nothing else heavy running |
 | M9 | Rebase rehearsal | Move to the next Chrome milestone using only committed scripts, and record the hours it took |
+| Mac | The Mac port | After the Windows milestones. Depot builds the engine for `macos-arm64`, GPUI's embedded mode gets its Mac half (see "Process and startup"), and every milestone's checks above run again on the Mac mini |
 
-After M9, `plan.md`'s order continues: good UX, ship, fix bugs, then AI.
+After the Mac port, `plan.md`'s order continues: good UX, ship, fix bugs, then AI.
 
 ## Extensions that must work
 
-uBlock Origin and 1Password must work exactly as they do in Chrome, and so must most popular extensions. Each line below is an M5 check on Windows and Mac.
+uBlock Origin and 1Password must work exactly as they do in Chrome, and so must most popular extensions. Each line below is an M5 check on Windows, and again at the Mac port.
 
 - **uBlock Origin, the full version.** It is a Manifest V2 extension, and Chrome has turned Manifest V2 off. One ungoogled-chromium patch keeps it on. Passes when it installs from the Web Store, blocks every ad request on a local ad test page, and its popup and dashboard open.
 - **1Password, with the desktop app.** The extension alone signs in and fills like in Chrome. Unlocking through the desktop app uses native messaging, which needs three things Ardia already found:
@@ -248,7 +287,7 @@ uBlock Origin and 1Password must work exactly as they do in Chrome, and so must 
 
 1. **Laptop build time.** The laptop has 15 GB of RAM, and the first full build takes hours. Incremental builds after it should take minutes, but every engine change waits on them. Depot takes the official and Mac builds.
 2. **Webium side effects.** We reuse code from a Chrome experiment and answer its check for our windows. M2 audits every caller. If Google removes Webium, we keep our copies of its helper classes and add the guards ourselves, which is where Ardia is today.
-3. **Windows layout.** GPUI's DirectComposition surface and blur in a child HWND are untested. M2 decides, and the fallback costs one patch.
+3. **Windows layout.** Settled in M2: GPUI draws in child HWNDs and the engine does the blur. What is left is what M2 could not check: an IME typing into a GPUI view, and a second monitor with another DPI.
 4. **External services.** Widevine, Safe Browsing, Translate and Cast each need Google's or a licensor's agreement. Until then, "never worse than Chrome" is false for that feature, and we say so.
 5. **Chrome surfaces that expect a toolbar.** Extension popups with no active tab, the extensions menu, the "added" bubble. Ardia hit a crash in `chrome.action.openPopup`. We test these on day one.
 6. **Keys, IME and accessibility** across GPUI's view and Chrome's window. Hidden test runs can't prove these, so a person checks VoiceOver and Narrator at M3 and M6.
@@ -271,5 +310,6 @@ uBlock Origin and 1Password must work exactly as they do in Chrome, and so must 
 ## Decided by the developer (2026-11-09)
 
 - Engine work happens on the Windows laptop. Mac and official builds run on Depot.
+- The whole app is built on Windows first. Every milestone passes there, and the Mac is one port milestone later ("since we complete we will build the whole app on windows first then care about mac later").
 - Keep Manifest V2 so the full uBlock Origin runs. 1Password and most popular extensions must work as in Chrome.
 - The rebase cadence is decided when jaal is first published.

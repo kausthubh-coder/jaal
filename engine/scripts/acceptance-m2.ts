@@ -112,7 +112,8 @@ function freshLog() {
   writeFileSync(logPath, "");
 }
 const browser = launch(profile, {
-  JAAL_UI_URL: `${testPage("m2-page.html")}|${testPage("m2-blur.html")}`,
+  // The third tab is Webium's own page, which must not load in jaal.
+  JAAL_UI_URL: `${testPage("m2-page.html")}|${testPage("m2-blur.html")}|chrome://webui-browser`,
   JAAL_UI_FAKE_ROWS: "5000",
   JAAL_UI_THEME: "light",
   JAAL_UI_LOG: logPath,
@@ -242,6 +243,13 @@ try {
     expect(log().includes("ui: 5000 test rows"), "the sidebar did not load the 5,000 fake rows");
     shot(hwnd, "sidebar", "m2-sidebar-windows");
     return `sidebar child at ${show(sidebarRect(c))}, page at ${show(page)}, scale ${scale}`;
+  });
+
+  await check("Webium audit: chrome://webui-browser is refused, and the browser survives it", async () => {
+    // Before the audit's patch, opening this page crashed the browser.
+    await waitFor("the page to finish loading", 15_000, () => /url: "chrome:\/\/webui-browser\/", title: "[^"]*", loading: false/.test(log()));
+    expect(browser.exitCode === null, `the browser exited with code ${browser.exitCode}`);
+    return "the tab finished loading as an error page, and the browser is still running";
   });
 
   await check("sidebar: the 5,000-row list scrolls", async () => {
