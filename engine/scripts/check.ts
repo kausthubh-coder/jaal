@@ -12,7 +12,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { ENGINE, checkTreeCommit, chromiumSrc, ownFiles, run, series, touchedFiles } from "./lib";
+import { ENGINE, checkTreeCommit, chromiumSrc, modifiedTrackedFiles, ownFiles, run, series, touchedFiles } from "./lib";
 
 const src = chromiumSrc();
 const problems: string[] = [];
@@ -47,11 +47,7 @@ try {
   rmSync(clean, { recursive: true, force: true });
 }
 
-const modified = run(["git", "diff", "--name-only"], src)
-  .out.split("\n")
-  .map((l) => l.trim())
-  .filter(Boolean);
-for (const path of modified) {
+for (const path of modifiedTrackedFiles(src)) {
   if (!touched.includes(path)) problems.push(`${path} is modified but no patch in patches/series touches it`);
 }
 

@@ -7,6 +7,7 @@
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::fmt;
+use std::marker::PhantomData;
 
 pub use jaal_engine_sys as sys;
 
@@ -136,9 +137,28 @@ pub unsafe fn event_from_raw(event: *const sys::jaal_event) -> Event {
 
 /// The engine, as seen from the UI library. Cheap to copy; all copies talk to
 /// the same engine.
+///
+/// Every call must run on the engine's UI thread, so an `Engine` can't be
+/// moved to another thread or shared with one:
+///
+/// ```compile_fail,E0277
+/// fn call_from_a_worker(engine: jaal_engine::Engine) {
+///     std::thread::spawn(move || engine.quit());
+/// }
+/// ```
+///
+/// ```compile_fail,E0277
+/// fn share_with_a_worker(engine: &'static jaal_engine::Engine) {
+///     std::thread::spawn(move || engine.quit());
+/// }
+/// ```
 #[derive(Clone, Copy)]
 pub struct Engine {
     api: &'static sys::jaal_engine_api,
+    // A raw pointer is neither Send nor Sync, and so is anything holding one.
+    // Without it the reference above would make Engine both, and safe code
+    // could call the engine from a worker thread.
+    ui_thread_only: PhantomData<*const ()>,
 }
 
 impl Engine {
@@ -165,7 +185,10 @@ impl Engine {
         {
             return Err(Error::Unsupported);
         }
-        Ok(Self { api })
+        Ok(Self {
+            api,
+            ui_thread_only: PhantomData,
+        })
     }
 
     /// Routes every engine event to `on_event`, replacing any earlier handler.
