@@ -1,0 +1,98 @@
+{
+  "runs": 5,
+  "refreshHz": 60,
+  "samples": [
+    {
+      "start_ms": 1761.548095703125,
+      "start_to_ui_ms": 902.876953125,
+      "memory_mb": 284.9140625,
+      "processes": 10,
+      "idle_cpu_pct": 3.1124481598798286,
+      "scroll_frames": 300,
+      "scroll_dropped": 1,
+      "scroll_p95_ms": 18.12109375
+    },
+    {
+      "start_ms": 1556.93896484375,
+      "start_to_ui_ms": 756.998046875,
+      "memory_mb": 276.89453125,
+      "processes": 9,
+      "idle_cpu_pct": 3.597996145806114,
+      "scroll_frames": 300,
+      "scroll_dropped": 1,
+      "scroll_p95_ms": 18.037109375
+    },
+    {
+      "start_ms": 1537.98291015625,
+      "start_to_ui_ms": 740.743896484375,
+      "memory_mb": 282.390625,
+      "processes": 10,
+      "idle_cpu_pct": 3.4446086516321834,
+      "scroll_frames": 299,
+      "scroll_dropped": 1,
+      "scroll_p95_ms": 18.004150390625
+    },
+    {
+      "start_ms": 1602.68994140625,
+      "start_to_ui_ms": 810.760009765625,
+      "memory_mb": 291.3515625,
+      "processes": 9,
+      "idle_cpu_pct": 3.827342946257981,
+      "scroll_frames": 300,
+      "scroll_dropped": 1,
+      "scroll_p95_ms": 18.093017578125
+    },
+    {
+      "start_ms": 1452.466064453125,
+      "start_to_ui_ms": 675.364013671875,
+      "memory_mb": 283.73046875,
+      "processes": 9,
+      "idle_cpu_pct": 5.130482724822348,
+      "scroll_frames": 300,
+      "scroll_dropped": 1,
+      "scroll_p95_ms": 17.952880859375
+    }
+  ],
+  "summary": {
+    "start_ms": {
+      "median": 1556.93896484375,
+      "min": 1452.466064453125,
+      "max": 1761.548095703125
+    },
+    "start_to_ui_ms": {
+      "median": 756.998046875,
+      "min": 675.364013671875,
+      "max": 902.876953125
+    },
+    "memory_mb": {
+      "median": 283.73046875,
+      "min": 276.89453125,
+      "max": 291.3515625
+    },
+    "processes": {
+      "median": 9,
+      "min": 9,
+      "max": 10
+    },
+    "idle_cpu_pct": {
+      "median": 3.597996145806114,
+      "min": 3.1124481598798286,
+      "max": 5.130482724822348
+    },
+    "scroll_frames": {
+      "median": 300,
+      "min": 299,
+      "max": 300
+    },
+    "scroll_dropped": {
+      "median": 1,
+      "min": 1,
+      "max": 1
+    },
+    "scroll_p95_ms": {
+      "median": 18.037109375,
+      "min": 17.952880859375,
+      "max": 18.12109375
+    }
+  }
+}
