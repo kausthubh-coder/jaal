@@ -23,6 +23,7 @@ Read `docs/plan.md` for the whole plan and `docs/bakeoff.md` for the bake-off ru
 | `bakeoff/web-ui`, `bakeoff/gpui-a`, `bakeoff/gpui-b` | One crate per variant |
 | `bakeoff/bench` | The scripts that run the tests and write `bakeoff/results` |
 | `docs/` | Plan, bake-off rules, research |
+| `docs/design/jaal.html` | The look of jaal on one page: the window and its popovers, settings, and every control, in each space, theme and platform. Its CSS variables are the color tokens |
 | `scripts/` | doctor and page generator |
 
 Shared code goes in `bakeoff/shared` only when two variants really use it.
