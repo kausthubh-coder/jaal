@@ -1,0 +1,26 @@
+diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
+index b2619baa8f..45db998c38 100644
+--- a/chrome/browser/chrome_browser_main.cc
++++ b/chrome/browser/chrome_browser_main.cc
+@@ -358,6 +358,10 @@
+ #include "components/component_updater/component_updater_service.h"
+ #endif
+ 
++#include "jaal/hooks.h"  // nogncheck
++
++JaalAddBrowserMainPartsHook g_jaal_add_browser_main_parts = nullptr;
++
+ namespace {
+ 
+ #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_LINUX) || \
+@@ -870,6 +874,10 @@ std::unique_ptr<content::BrowserMainParts> ChromeBrowserMainParts::Create(
+   main_parts->AddParts(
+       std::make_unique<ChromeBrowserMainExtraPartsSegmentationPlatform>());
+ 
++  if (g_jaal_add_browser_main_parts) {
++    g_jaal_add_browser_main_parts(main_parts.get());
++  }
++
+   return main_parts;
+ }
+ 

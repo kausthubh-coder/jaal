@@ -1,0 +1,7 @@
+# Development build on the Windows laptop: no symbols, fast relinks.
+is_debug = false
+is_component_build = false
+# Symbols off keeps the output small enough for this laptop's disk.
+symbol_level = 0
+blink_symbol_level = 0
+v8_symbol_level = 0

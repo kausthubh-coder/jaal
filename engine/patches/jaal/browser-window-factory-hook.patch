@@ -1,0 +1,30 @@
+diff --git a/chrome/browser/ui/views/frame/browser_window_factory.cc b/chrome/browser/ui/views/frame/browser_window_factory.cc
+index ad579aa818..bea731f126 100644
+--- a/chrome/browser/ui/views/frame/browser_window_factory.cc
++++ b/chrome/browser/ui/views/frame/browser_window_factory.cc
+@@ -13,8 +13,11 @@
+ #include "chrome/browser/ui/webui_browser/webui_browser.h"
+ #include "chrome/browser/ui/webui_browser/webui_browser_window.h"
+ #include "chrome/browser/ui/window_feature_controller/window_feature_controller.h"
++#include "jaal/hooks.h"  // nogncheck
+ #include "ui/views/widget/widget.h"
+ 
++JaalCreateBrowserWindowHook g_jaal_create_browser_window = nullptr;
++
+ #if defined(USE_AURA)
+ #include "ui/aura/client/aura_constants.h"
+ #include "ui/aura/window.h"
+@@ -32,6 +35,13 @@ std::unique_ptr<BrowserWindow, BrowserWindowDeleter>
+ BrowserWindow::CreateBrowserWindow(BrowserWindowInterface* browser,
+                                    bool user_gesture,
+                                    bool in_tab_dragging) {
++  if (g_jaal_create_browser_window) {
++    if (auto window =
++            g_jaal_create_browser_window(browser, user_gesture, in_tab_dragging)) {
++      return window;
++    }
++  }
++
+   if (webui_browser::IsWebUIBrowserEnabled() &&
+       browser->GetType() == BrowserWindowInterface::Type::TYPE_NORMAL) {
+     return std::unique_ptr<BrowserWindow, BrowserWindowDeleter>(

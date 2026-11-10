@@ -1,0 +1,5 @@
+# The Chromium jaal's engine is built from. engine/scripts/apply.ts refuses a
+# tree at any other commit. M0 fetched it with:
+#   fetch --no-history chromium && git checkout tags/<version>
+version = "156.0.8078.88"
+commit = "8954d18543712dc11b97c3aca0a6e714aa2d7dcd"

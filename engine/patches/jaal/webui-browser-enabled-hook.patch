@@ -1,0 +1,21 @@
+diff --git a/chrome/browser/ui/webui_browser/webui_browser.cc b/chrome/browser/ui/webui_browser/webui_browser.cc
+index 5ccde5e719..b156145cf9 100644
+--- a/chrome/browser/ui/webui_browser/webui_browser.cc
++++ b/chrome/browser/ui/webui_browser/webui_browser.cc
+@@ -11,11 +11,15 @@
+ #include "content/public/browser/web_contents.h"
+ #include "content/public/browser/web_ui.h"
+ #include "content/public/browser/web_ui_controller.h"
++#include "jaal/hooks.h"  // nogncheck
++
++bool g_jaal_webui_browser_enabled = false;
+ 
+ namespace webui_browser {
+ 
+ bool IsWebUIBrowserEnabled() {
+-  return base::FeatureList::IsEnabled(features::kWebium);
++  return g_jaal_webui_browser_enabled ||
++         base::FeatureList::IsEnabled(features::kWebium);
+ }
+ 
+ bool IsBrowserUIWebContents(content::WebContents* web_contents) {

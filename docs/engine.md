@@ -1,6 +1,6 @@
 # Engine plan
 
-The engine is Chromium plus our patches, built as a library that gpui-a hosts instead of CEF. This is the plan for it. Nothing here is built yet.
+The engine is Chromium plus our patches, built as a library that gpui-a hosts instead of CEF. This is the plan for it. M0 and M1 have passed on Windows; the rest isn't built yet.
 
 It merges two plans written separately on 2026-11-09 from the same brief, one by Claude Fable and one by GPT Astra: [Fable's](research/2026-11-09-engine-plan-fable.md) and [Astra's](research/2026-11-09-engine-plan-astra.md). Those two files carry the file and line citations behind each choice. Where the two plans disagreed, the last section says what we picked and why. Chromium paths below are from 156.0.8078.88.
 
@@ -148,8 +148,10 @@ engine/
   patches/PICKS.md         why each privacy patch is in, its upstream hash and licence
   args/                    GN args per OS, CPU and build kind
   scripts/                 sync, apply, check, build, package (bun)
+  test/                    pages the acceptance run loads
 crates/jaal-engine-sys/    bindgen output
 crates/jaal-engine/        safe Rust API
+crates/jaal-ui-hello/      the M1 test UI: one window, one tab
 ```
 
 Rules:
@@ -217,7 +219,7 @@ Features that need someone else's permission are tracked one by one, and each bl
 | | Milestone | Passes when |
 |---|---|---|
 | M0 | Plain Chromium builds | **Windows passed 2026-11-09** ([results](../bakeoff/results/2026-11-09-m0-windows.md)): the laptop's `chrome` build opens a local test page with the sandbox on and exits cleanly, with a screenshot. Still open: Depot builds the same for Mac, and it runs on the Mac mini |
-| M1 | Library bootstrap, on Windows | `JaalMainDelegate`, the `IsWebUIBrowserEnabled()` hook, the exe and engine and UI library layout, and a 50-line Rust UI library that opens one window and one tab through the C API. The window has no Chrome toolbar or tab strip, helper processes never load the UI library, a wrong ABI is refused before any profile opens, and quit and cancelled quit both work |
+| M1 | Library bootstrap, on Windows | **Windows passed 2026-11-09** ([results](../bakeoff/results/2026-11-09-m1-windows.md)), with Chrome's file names kept for now. `JaalMainDelegate`, the `IsWebUIBrowserEnabled()` hook, the exe and engine and UI library layout, and a 50-line Rust UI library that opens one window and one tab through the C API. The window has no Chrome toolbar or tab strip, helper processes never load the UI library, a wrong ABI is refused before any profile opens, and quit and cancelled quit both work |
 | M2 | GPUI inside the engine on both OSes | The 5,000-row sidebar renders in our window on Mac and Windows. Page input, IME, shortcuts, a file picker and a tab-modal dialog work. The command bar draws over the page with blur and shadow. Moving, resizing, minimizing, fullscreen and mixed DPI keep everything in place. A stack sample shows Chromium's pump, not GPUI's loop. If Windows fails here, we switch to the fallback layout and say so |
 | M3 | gpui-a on the engine | Every bake-off feature works on Windows, then Mac. Over 5 runs on the same machine, medians are within 10% of gpui-a on CEF. On the Mac that means start ≤ 416 ms, footprint ≤ 576 MB, switch ≤ 30 ms, scroll dropped ≤ 1, resize dropped ≤ 7, idle CPU ≤ 2.3% (from `bakeoff/results/2026-11-09-Mac.md`). Windows has no CEF numbers yet, so the laptop measures gpui-a on CEF first (branch `windows/gpui-a`). The CEF build stays as a comparison |
 | M4 | Lifecycle | `window.open`, `target=_blank`, Cmd-click and a POST form all arrive as tabs with their opener. Beforeunload cancels a close and a quit. A renderer crash leaves the browser up. Session restore and private windows work, and an extension's `chrome.windows.getAll` lists exactly our windows and tabs |

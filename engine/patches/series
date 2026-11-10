@@ -1,0 +1,7 @@
+# Applied in this order by engine/scripts/apply.ts. One patch per hook; Chrome's
+# own files get hooks and nothing more (docs/engine.md › Where the code lives).
+jaal/chrome-dll-links-jaal.patch
+jaal/chrome-main-jaal-delegate.patch
+jaal/browser-main-parts-hook.patch
+jaal/webui-browser-enabled-hook.patch
+jaal/browser-window-factory-hook.patch

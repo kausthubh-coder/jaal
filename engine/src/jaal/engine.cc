@@ -1,0 +1,447 @@
+#include "jaal/engine.h"
+
+#include <utility>
+
+#include "base/check.h"
+#include "base/functional/bind.h"
+#include "base/logging.h"
+#include "base/no_destructor.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/task/single_thread_task_runner.h"
+#include "build/build_config.h"
+#include "chrome/browser/tab_list/tab_removed_reason.h"
+#include "chrome/browser/lifetime/application_lifetime_desktop.h"
+#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+#include "chrome/browser/ui/browser_window/public/create_browser_window.h"
+#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+#include "chrome/browser/ui/navigator/browser_navigator.h"
+#include "chrome/browser/ui/navigator/browser_navigator_params.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "components/keep_alive_registry/keep_alive_types.h"
+#include "components/keep_alive_registry/scoped_keep_alive.h"
+#include "components/tabs/public/tab_interface.h"
+#include "content/public/browser/browser_thread.h"
+#include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/web_contents.h"
+#include "jaal/browser_window.h"
+#include "ui/base/page_transition_types.h"
+#include "ui/base/window_open_disposition.h"
+#include "url/gurl.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "ui/views/win/hwnd_util.h"
+#endif
+
+namespace jaal {
+
+namespace {
+
+// Every call must come from the UI thread (docs/engine.md › The C API, rule 1).
+#define JAAL_CHECK_UI_THREAD() \
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI)
+
+}  // namespace
+
+// static
+Engine& Engine::Get() {
+  static base::NoDestructor<Engine> engine;
+  return *engine;
+}
+
+Engine::Engine() = default;
+Engine::~Engine() = default;
+
+void Engine::OnBrowserStarting() {
+  keep_alive_ = std::make_unique<ScopedKeepAlive>(
+      // jaal's stand-in for Chrome's Mac AppController, which is what holds
+      // this origin in Chrome.
+      KeepAliveOrigin::APP_CONTROLLER, KeepAliveRestartOption::DISABLED);
+  closing_all_browsers_subscription_ = chrome::AddClosingAllBrowsersCallback(
+      base::BindRepeating(&Engine::OnClosingAllBrowsers,
+                          weak_factory_.GetWeakPtr()));
+  browser_collection_observation_.Observe(GlobalBrowserCollection::GetInstance());
+}
+
+void Engine::StartUi(jaal_ui_main_fn ui_main) {
+  JAAL_CHECK_UI_THREAD();
+  // Posted first, so it reaches the app before anything its own calls cause.
+  PostEvent({.kind = JAAL_EVENT_STARTED});
+  ui_main(&Engine::GetApi);
+}
+
+void Engine::OnMainLoopEnded() {
+  browser_collection_observation_.Reset();
+  closing_all_browsers_subscription_ = {};
+  sink_ = nullptr;
+  sink_user_data_ = nullptr;
+}
+
+void Engine::OnWindowCreated(JaalBrowserWindow* window) {
+  windows_.Add(window);
+  window->browser()->GetTabStripModel()->AddObserver(this);
+}
+
+void Engine::OnWindowDestroyed(JaalBrowserWindow* window) {
+  window->browser()->GetTabStripModel()->RemoveObserver(this);
+  const jaal_handle handle = windows_.Remove(window);
+  PostEvent({.kind = JAAL_EVENT_WINDOW_CLOSED, .window = handle});
+}
+
+void Engine::OnTabStripModelChanged(TabStripModel* tab_strip_model,
+                                    const TabStripModelChange& change,
+                                    const TabStripSelectionChange& selection) {
+  if (change.type() == TabStripModelChange::kInserted) {
+    for (const auto& inserted : change.GetInsert()->contents) {
+      const jaal_handle tab = tabs_.Add(inserted.tab);
+      PendingEvent event = TabStateEvent(inserted.tab, {0, 0});
+      event.kind = JAAL_EVENT_TAB_INSERTED;
+      event.tab = tab;
+      PostEvent(std::move(event));
+    }
+  } else if (change.type() == TabStripModelChange::kRemoved) {
+    for (const auto& removed : change.GetRemove()->contents) {
+      // A tab moving to another window keeps its handle; it arrives there as
+      // an insert.
+      if (removed.remove_reason ==
+          TabRemovedReason::kInsertedIntoOtherTabStrip) {
+        continue;
+      }
+      const jaal_handle tab = tabs_.Remove(removed.tab);
+      PostEvent({.kind = JAAL_EVENT_TAB_REMOVED, .tab = tab});
+    }
+  }
+
+  if (selection.active_tab_changed() && selection.new_tab) {
+    PostEvent(TabStateEvent(selection.new_tab, {0, 0}));
+  }
+}
+
+void Engine::OnTabChangedAt(tabs::TabInterface* tab,
+                            TabChangeType change_type) {
+  if (change_type == TabChangeType::kAll ||
+      change_type == TabChangeType::kLoadingOnly) {
+    PostEvent(TabStateEvent(tab, {0, 0}));
+  }
+}
+
+void Engine::OnBrowserClosed(BrowserWindowInterface* browser) {
+  MaybeFinishQuit();
+}
+
+Engine::PendingEvent Engine::TabStateEvent(tabs::TabInterface* tab,
+                                           jaal_handle window) {
+  PendingEvent event = {.kind = JAAL_EVENT_TAB_STATE};
+  event.tab = tabs_.Find(tab).value_or(jaal_handle{0, 0});
+  event.window = WindowHandleForTab(tab).value_or(window);
+  content::WebContents* contents = tab->GetContents();
+  event.url = contents->GetVisibleURL().spec();
+  event.title = base::UTF16ToUTF8(contents->GetTitle());
+  event.loading = contents->IsLoading();
+  event.active = tab->IsActivated();
+  return event;
+}
+
+std::optional<jaal_handle> Engine::WindowHandleForTab(tabs::TabInterface* tab) {
+  BrowserWindowInterface* browser = tab->GetBrowserWindowInterface();
+  if (!browser) {
+    return std::nullopt;
+  }
+  JaalBrowserWindow* window = JaalBrowserWindow::FromBrowser(browser);
+  return window ? windows_.Find(window) : std::nullopt;
+}
+
+void Engine::PostEvent(PendingEvent event) {
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(&Engine::DeliverEvent,
+                                weak_factory_.GetWeakPtr(), std::move(event)));
+}
+
+void Engine::DeliverEvent(PendingEvent event) {
+  if (!sink_) {
+    return;
+  }
+  jaal_event out = {};
+  out.struct_size = sizeof(jaal_event);
+  out.kind = event.kind;
+  out.window = event.window;
+  out.tab = event.tab;
+  out.url = event.url.empty() ? nullptr : event.url.c_str();
+  out.title = event.title.empty() ? nullptr : event.title.c_str();
+  out.loading = event.loading;
+  out.active = event.active;
+  sink_(sink_user_data_.get(), &out);
+}
+
+// Quitting ---------------------------------------------------------------
+
+jaal_status Engine::Quit() {
+  JAAL_CHECK_UI_THREAD();
+  if (quitting_) {
+    return JAAL_OK;
+  }
+  quitting_ = true;
+  if (GlobalBrowserCollection::GetInstance()->IsEmpty()) {
+    MaybeFinishQuit();
+    return JAAL_OK;
+  }
+  // Runs every window's beforeunload checks; any of them can cancel, which
+  // reaches OnClosingAllBrowsers(false).
+  chrome::CloseAllBrowsersAndQuit();
+  return JAAL_OK;
+}
+
+void Engine::OnClosingAllBrowsers(bool closing) {
+  if (!closing && quitting_) {
+    quitting_ = false;
+    PostEvent({.kind = JAAL_EVENT_QUIT_CANCELLED});
+  }
+}
+
+void Engine::MaybeFinishQuit() {
+  if (!quitting_ || will_quit_sent_ ||
+      !GlobalBrowserCollection::GetInstance()->IsEmpty()) {
+    return;
+  }
+  // Every window closed, so every beforeunload passed: the quit is committed.
+  will_quit_sent_ = true;
+  PostEvent({.kind = JAAL_EVENT_WILL_QUIT});
+  // Dropped after the event so the app hears it before the loop ends. With
+  // the last keep-alive gone, Chrome ends its main loop.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(
+                     [](base::WeakPtr<Engine> engine) {
+                       if (engine) {
+                         engine->keep_alive_.reset();
+                       }
+                     },
+                     weak_factory_.GetWeakPtr()));
+}
+
+// The C API ---------------------------------------------------------------
+
+jaal_status Engine::SetEventSink(jaal_event_sink sink, void* user_data) {
+  JAAL_CHECK_UI_THREAD();
+  sink_ = sink;
+  sink_user_data_ = user_data;
+  return JAAL_OK;
+}
+
+jaal_status Engine::WindowCreate(jaal_handle* out_window) {
+  JAAL_CHECK_UI_THREAD();
+  if (!out_window) {
+    return JAAL_ERR_INVALID;
+  }
+  if (quitting_) {
+    return JAAL_ERR_CANCELLED;
+  }
+  Profile* profile = ProfileManager::GetLastUsedProfileAllowedByPolicy();
+  if (!profile) {
+    return JAAL_ERR_INTERNAL;
+  }
+  if (GetBrowserWindowCreationStatusForProfile(*profile) !=
+      BrowserWindowInterface::CreationStatus::kOk) {
+    return JAAL_ERR_DENIED;
+  }
+  BrowserWindowInterface* browser = CreateBrowserWindow(
+      BrowserWindowCreateParams(*profile, /*from_user_gesture=*/true));
+  JaalBrowserWindow* window = JaalBrowserWindow::FromBrowser(browser);
+  if (!window) {
+    // The window hook isn't installed, so Chrome made its own window.
+    return JAAL_ERR_INTERNAL;
+  }
+  window->Show();
+  *out_window = windows_.Find(window).value();
+  return JAAL_OK;
+}
+
+jaal_status Engine::WindowClose(jaal_handle handle) {
+  JAAL_CHECK_UI_THREAD();
+  JaalBrowserWindow* window = windows_.Get(handle);
+  if (!window) {
+    return JAAL_ERR_GONE;
+  }
+  window->Close();
+  return JAAL_OK;
+}
+
+jaal_status Engine::WindowNativeHandle(jaal_handle handle, void** out_handle) {
+  JAAL_CHECK_UI_THREAD();
+  if (!out_handle) {
+    return JAAL_ERR_INVALID;
+  }
+  JaalBrowserWindow* window = windows_.Get(handle);
+  if (!window) {
+    return JAAL_ERR_GONE;
+  }
+#if BUILDFLAG(IS_WIN)
+  *out_handle = views::HWNDForNativeWindow(window->GetNativeWindow());
+  return JAAL_OK;
+#else
+  return JAAL_ERR_UNSUPPORTED;
+#endif
+}
+
+jaal_status Engine::WindowSetPageRect(jaal_handle handle, jaal_rect rect) {
+  JAAL_CHECK_UI_THREAD();
+  JaalBrowserWindow* window = windows_.Get(handle);
+  if (!window) {
+    return JAAL_ERR_GONE;
+  }
+  if (rect.width < 0 || rect.height < 0) {
+    return JAAL_ERR_INVALID;
+  }
+  window->SetPageRect(gfx::Rect(rect.x, rect.y, rect.width, rect.height));
+  return JAAL_OK;
+}
+
+jaal_status Engine::TabOpen(jaal_handle window_handle,
+                            const char* url,
+                            uint8_t foreground,
+                            jaal_handle* out_tab) {
+  JAAL_CHECK_UI_THREAD();
+  if (!url || !out_tab) {
+    return JAAL_ERR_INVALID;
+  }
+  JaalBrowserWindow* window = windows_.Get(window_handle);
+  if (!window) {
+    return JAAL_ERR_GONE;
+  }
+  const GURL gurl(url);
+  if (!gurl.is_valid()) {
+    return JAAL_ERR_INVALID;
+  }
+  NavigateParams params(window->browser(), gurl,
+                        ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
+  params.disposition = foreground ? WindowOpenDisposition::NEW_FOREGROUND_TAB
+                                  : WindowOpenDisposition::NEW_BACKGROUND_TAB;
+  Navigate(&params);
+  if (!params.navigated_or_inserted_contents) {
+    return JAAL_ERR_INTERNAL;
+  }
+  tabs::TabInterface* tab = tabs::TabInterface::MaybeGetFromContents(
+      params.navigated_or_inserted_contents);
+  if (!tab) {
+    return JAAL_ERR_INTERNAL;
+  }
+  // Normally the insert already registered it; Add() returns that handle.
+  *out_tab = tabs_.Add(tab);
+  return JAAL_OK;
+}
+
+jaal_status Engine::TabClose(jaal_handle handle) {
+  JAAL_CHECK_UI_THREAD();
+  tabs::TabInterface* tab = tabs_.Get(handle);
+  if (!tab) {
+    return JAAL_ERR_GONE;
+  }
+  tab->Close();
+  return JAAL_OK;
+}
+
+jaal_status Engine::TabActivate(jaal_handle handle) {
+  JAAL_CHECK_UI_THREAD();
+  tabs::TabInterface* tab = tabs_.Get(handle);
+  if (!tab) {
+    return JAAL_ERR_GONE;
+  }
+  BrowserWindowInterface* browser = tab->GetBrowserWindowInterface();
+  if (!browser) {
+    return JAAL_ERR_GONE;
+  }
+  TabStripModel* model = browser->GetTabStripModel();
+  model->ActivateTabAt(model->GetIndexOfTab(tab));
+  return JAAL_OK;
+}
+
+jaal_status Engine::TabLoad(jaal_handle handle, const char* url) {
+  JAAL_CHECK_UI_THREAD();
+  if (!url) {
+    return JAAL_ERR_INVALID;
+  }
+  tabs::TabInterface* tab = tabs_.Get(handle);
+  if (!tab) {
+    return JAAL_ERR_GONE;
+  }
+  const GURL gurl(url);
+  if (!gurl.is_valid()) {
+    return JAAL_ERR_INVALID;
+  }
+  content::NavigationController::LoadURLParams params(gurl);
+  params.transition_type = ui::PAGE_TRANSITION_TYPED;
+  tab->GetContents()->GetController().LoadURLWithParams(params);
+  return JAAL_OK;
+}
+
+namespace {
+
+jaal_status ApiSetEventSink(jaal_event_sink sink, void* user_data) {
+  return Engine::Get().SetEventSink(sink, user_data);
+}
+jaal_status ApiQuit() {
+  return Engine::Get().Quit();
+}
+jaal_status ApiWindowCreate(jaal_handle* out_window) {
+  return Engine::Get().WindowCreate(out_window);
+}
+jaal_status ApiWindowClose(jaal_handle window) {
+  return Engine::Get().WindowClose(window);
+}
+jaal_status ApiWindowNativeHandle(jaal_handle window, void** out_handle) {
+  return Engine::Get().WindowNativeHandle(window, out_handle);
+}
+jaal_status ApiWindowSetPageRect(jaal_handle window, jaal_rect rect) {
+  return Engine::Get().WindowSetPageRect(window, rect);
+}
+jaal_status ApiTabOpen(jaal_handle window,
+                       const char* url,
+                       uint8_t foreground,
+                       jaal_handle* out_tab) {
+  return Engine::Get().TabOpen(window, url, foreground, out_tab);
+}
+jaal_status ApiTabClose(jaal_handle tab) {
+  return Engine::Get().TabClose(tab);
+}
+jaal_status ApiTabActivate(jaal_handle tab) {
+  return Engine::Get().TabActivate(tab);
+}
+jaal_status ApiTabLoad(jaal_handle tab, const char* url) {
+  return Engine::Get().TabLoad(tab, url);
+}
+
+constexpr jaal_engine_api kApi = {
+    .struct_size = sizeof(jaal_engine_api),
+    .abi_major = JAAL_ENGINE_ABI_MAJOR,
+    .abi_minor = JAAL_ENGINE_ABI_MINOR,
+    .set_event_sink = &ApiSetEventSink,
+    .quit = &ApiQuit,
+    .window_create = &ApiWindowCreate,
+    .window_close = &ApiWindowClose,
+    .window_native_handle = &ApiWindowNativeHandle,
+    .window_set_page_rect = &ApiWindowSetPageRect,
+    .tab_open = &ApiTabOpen,
+    .tab_close = &ApiTabClose,
+    .tab_activate = &ApiTabActivate,
+    .tab_load = &ApiTabLoad,
+};
+
+// The size of the first table version. A UI library built against a later
+// minor version passes a bigger size and checks struct_size before using
+// newer calls; one built against an older version must pass at least this.
+constexpr uint32_t kFirstApiSize = sizeof(jaal_engine_api);
+
+}  // namespace
+
+// static
+const jaal_engine_api* Engine::GetApi(uint32_t abi_major,
+                                      uint32_t struct_size) {
+  if (abi_major != JAAL_ENGINE_ABI_MAJOR || struct_size < kFirstApiSize) {
+    LOG(ERROR) << "jaal: the UI library asked for ABI " << abi_major
+               << " with a table of " << struct_size << " bytes; the engine is "
+               << JAAL_ENGINE_ABI_MAJOR << " with " << kFirstApiSize;
+    return nullptr;
+  }
+  return &kApi;
+}
+
+}  // namespace jaal

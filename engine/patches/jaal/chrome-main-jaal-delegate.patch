@@ -1,0 +1,24 @@
+diff --git a/chrome/app/chrome_main.cc b/chrome/app/chrome_main.cc
+index 199142d671..afcb9c5f3c 100644
+--- a/chrome/app/chrome_main.cc
++++ b/chrome/app/chrome_main.cc
+@@ -56,6 +56,7 @@
+ #include "chrome/common/chrome_constants.h"
+ #include "chrome/install_static/initialize_from_primary_module.h"
+ #include "chrome/install_static/install_details.h"
++#include "jaal/main_delegate.h"  // nogncheck
+ 
+ #define DLLEXPORT __declspec(dllexport)
+ #endif  // BUILDFLAG(IS_WIN)
+@@ -129,9 +130,9 @@ int ChromeMain(int argc, const char** argv) {
+       base::TimeTicks::FromInternalValue(exe_entry_point_ticks),
+       base::TimeTicks::FromInternalValue(preread_begin_ticks),
+       base::TimeTicks::FromInternalValue(preread_end_ticks)};
+-  ChromeMainDelegate chrome_main_delegate(timestamps);
++  jaal::JaalMainDelegate chrome_main_delegate(timestamps);
+ #else  // BUILDFLAG(IS_WIN)
+-  ChromeMainDelegate chrome_main_delegate(
++  jaal::JaalMainDelegate chrome_main_delegate(
+       {.exe_entry_point_ticks = base::TimeTicks::Now()});
+ #endif
+   content::ContentMainParams params(&chrome_main_delegate);

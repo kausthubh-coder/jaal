@@ -26,6 +26,9 @@ Read `docs/plan.md` for the whole plan and `docs/bakeoff.md` for the bake-off ru
 | `bakeoff/bench` | The scripts that run the tests and write `bakeoff/results` |
 | `docs/` | Plan, bake-off rules, research |
 | `scripts/` | doctor and page generator |
+| `engine/` | The engine: our layer inside Chrome (`src/jaal`), the C header (`public/jaal_engine.h`), Chrome patches (`patches/`), the Chromium lock and its scripts. Plan: `docs/engine.md` |
+| `crates/jaal-engine-sys`, `crates/jaal-engine` | Rust bindings for `jaal_engine.h` (generated) and the safe API over them |
+| `crates/jaal-ui-hello` | The smallest UI library (`jaal_ui.dll`): one window, one tab. The engine acceptance run drives it |
 
 Shared code goes in `bakeoff/shared` only when two variants really use it.
 
@@ -38,6 +41,12 @@ Shared code goes in `bakeoff/shared` only when two variants really use it.
 - Test: `cargo test -p <crate>`.
 - Lint the crate you changed: `cargo clippy -p <crate> --all-targets -- -D warnings` and `cargo fmt -p <crate>`.
 - Full check (CI runs this): `bun run check`.
+- Engine, Windows only for now. The Chromium checkout lives outside the repo (`C:\src\chromium\src`, or `JAAL_CHROMIUM_SRC`) at `engine/chromium.lock`'s commit.
+  - `bun engine/scripts/apply.ts` copies `engine/src` into the checkout and applies `engine/patches/series`. Edit in the repo, never in the checkout.
+  - `bun engine/scripts/check.ts` fails if the checkout differs from what the repo says. Run it before every engine PR.
+  - `bun engine/scripts/build.ts` builds `out/Release` (about 2 to 4 minutes after a change to `//jaal`; a first build takes hours).
+  - `cargo build -p jaal-ui-hello --release`, plus `--features wrong-abi --target-dir target/wrong-abi`, then `bun engine/scripts/acceptance.ts` runs M1's checks against the real engine. It takes the foreground for a few seconds.
+  - After changing `jaal_engine.h`, run `bun engine/scripts/bindgen.ts` (needs `bindgen-cli` and libclang; `--check` tells you if the committed bindings are stale).
 
 ## Proving a change works
 
