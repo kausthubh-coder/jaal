@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>jaal quit test</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 24px system-ui, sans-serif; }
+  button { width: 100%; height: 100%; font: inherit; background: #f4f1ea; border: 0; }
+</style>
+<!--
+  Engine acceptance page. Clicking anywhere gives the page a user gesture (so
+  Chrome honours its beforeunload) and sets the title to jaal:quit:<n>, which
+  the hello UI answers with a quit.
+-->
+<button id="quit">Click to ask jaal to quit (this page asks to stay)</button>
+<script>
+  let asks = 0;
+  document.getElementById("quit").addEventListener("click", () => {
+    asks += 1;
+    document.title = `jaal:quit:${asks}`;
+  });
+  addEventListener("beforeunload", (event) => {
+    event.preventDefault();
+    event.returnValue = "";
+  });
+</script>

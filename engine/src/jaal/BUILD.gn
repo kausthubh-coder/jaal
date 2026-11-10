@@ -1,0 +1,45 @@
+# jaal's layer inside Chrome, copied into the Chromium tree as //jaal by
+# engine/scripts/apply.ts. chrome_dll depends on it (patches/jaal/).
+
+source_set("hooks") {
+  # Header only. Chrome's files include it with `// nogncheck`, and each hook
+  # is defined in the Chrome file that reads it.
+  sources = [ "hooks.h" ]
+}
+
+source_set("jaal") {
+  sources = [
+    "browser_window.cc",
+    "browser_window.h",
+    "engine.cc",
+    "engine.h",
+    "location_bar.cc",
+    "location_bar.h",
+    "main_delegate.cc",
+    "main_delegate.h",
+    "modal_dialog_host.cc",
+    "modal_dialog_host.h",
+    "public/jaal_engine.h",
+  ]
+
+  public_deps = [ ":hooks" ]
+  deps = [
+    "//base",
+    "//chrome/browser",
+    "//chrome/browser/profiles:profile",
+    "//chrome/browser/ui",
+    "//chrome/common",
+    "//components/input",
+    "//components/keep_alive_registry",
+    "//components/web_modal",
+    "//content/public/browser",
+    "//content/public/common",
+    "//ui/base",
+    "//ui/display",
+    "//ui/gfx",
+    "//ui/native_theme",
+    "//ui/views",
+    "//ui/views/controls/webview",
+    "//url",
+  ]
+}
