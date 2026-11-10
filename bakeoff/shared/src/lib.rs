@@ -125,7 +125,19 @@ pub fn pages_dir() -> PathBuf {
 pub fn test_page_url(n: usize) -> String {
     let path = pages_dir().join(format!("page-{n}.html"));
     let path = path.canonicalize().unwrap_or(path);
-    format!("file://{}", path.display())
+    file_url(&path)
+}
+
+/// `file://` URL of an absolute path. On Windows `canonicalize` gives
+/// `\\?\C:\dir\page.html`, which a URL spells `file:///C:/dir/page.html`.
+fn file_url(path: &Path) -> String {
+    let path = path.display().to_string();
+    if cfg!(windows) {
+        let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
+        format!("file:///{}", path.replace('\\', "/"))
+    } else {
+        format!("file://{path}")
+    }
 }
 
 /// What the URL field and command bar do with typed text: URLs and bare
@@ -214,8 +226,20 @@ mod tests {
         for n in 1..=10 {
             let url = test_page_url(n);
             let path = url.trim_start_matches("file://");
+            // file:///C:/dir is the path C:/dir.
+            #[cfg(windows)]
+            let path = path.trim_start_matches('/');
             assert!(Path::new(path).is_file(), "missing {path}");
         }
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn windows_paths_become_file_urls() {
+        assert_eq!(
+            file_url(Path::new(r"\\?\C:\src\jaal\page-1.html")),
+            "file:///C:/src/jaal/page-1.html"
+        );
     }
 
     #[test]

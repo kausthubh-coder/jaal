@@ -115,6 +115,22 @@ class Engine : public TabStripModelObserver, public BrowserCollectionObserver {
   // Called by JaalBrowserWindow.
   void OnWindowCreated(JaalBrowserWindow* window);
   void OnWindowDestroyed(JaalBrowserWindow* window);
+  void OnWindowStateChanged(JaalBrowserWindow* window);
+  // A raw key down that reached a page of `window`. Before the page gets it
+  // (`before_page`), returns true when the app's shortcut filter claims the
+  // key, and the page must not see it. After the page left it unhandled,
+  // tells the app and returns false.
+  bool OnPageKeyDown(JaalBrowserWindow* window,
+                     int key_code,
+                     int blink_modifiers,
+                     bool before_page);
+
+  // True while the app is inside one of the calls below. Anything that would
+  // send a window message to the app's own views waits for the next task
+  // then, because the app's UI toolkit can't be re-entered.
+  bool in_api_call() const { return api_call_depth_ > 0; }
+  void EnterApiCall() { ++api_call_depth_; }
+  void LeaveApiCall() { --api_call_depth_; }
 
   // The C API, one method per call.
   jaal_status SetEventSink(jaal_event_sink sink, void* user_data);
@@ -130,6 +146,31 @@ class Engine : public TabStripModelObserver, public BrowserCollectionObserver {
   jaal_status TabClose(jaal_handle tab);
   jaal_status TabActivate(jaal_handle tab);
   jaal_status TabLoad(jaal_handle tab, const char* url);
+  jaal_status SetShortcutFilter(jaal_shortcut_filter filter, void* user_data);
+  jaal_status WindowSetPagePlacement(jaal_handle window,
+                                     jaal_placement placement);
+  jaal_status WindowAttachView(jaal_handle window,
+                               void* native_view,
+                               const jaal_view_options* options);
+  jaal_status WindowUpdateView(jaal_handle window,
+                               void* native_view,
+                               const jaal_view_options* options);
+  jaal_status WindowDetachView(jaal_handle window, void* native_view);
+  jaal_status WindowFocusPage(jaal_handle window);
+  jaal_status WindowSetState(jaal_handle window, jaal_window_state state);
+  jaal_status WindowCreateWith(const jaal_window_options* options,
+                               jaal_handle* out_window);
+  jaal_status WindowSetStyle(jaal_handle window,
+                             const jaal_window_style* style);
+  jaal_status WindowBeginDrag(jaal_handle window);
+  jaal_status TabNavigate(jaal_handle tab, jaal_nav_action action);
+
+  // The options of the window being created right now. Chrome's window
+  // factory has no room for them, so the new JaalBrowserWindow reads them
+  // here.
+  const jaal_window_options& creating_window_options() const {
+    return creating_window_options_;
+  }
 
   static const jaal_engine_api* GetApi(uint32_t abi_major,
                                        uint32_t struct_size);
@@ -147,6 +188,16 @@ class Engine : public TabStripModelObserver, public BrowserCollectionObserver {
     std::string title;
     bool loading = false;
     bool active = false;
+    uint32_t key_code = 0;
+    uint32_t modifiers = 0;
+    bool key_reserved = false;
+    bool can_go_back = false;
+    bool can_go_forward = false;
+    bool window_active = false;
+    jaal_window_state window_state = JAAL_WINDOW_NORMAL;
+    int client_width = 0;
+    int client_height = 0;
+    float scale = 1.0f;
   };
 
   Engine();
@@ -174,6 +225,10 @@ class Engine : public TabStripModelObserver, public BrowserCollectionObserver {
 
   jaal_event_sink sink_ = nullptr;
   raw_ptr<void> sink_user_data_ = nullptr;
+  jaal_shortcut_filter shortcut_filter_ = nullptr;
+  raw_ptr<void> shortcut_filter_user_data_ = nullptr;
+  int api_call_depth_ = 0;
+  jaal_window_options creating_window_options_ = {};
 
   HandleRegistry<JaalBrowserWindow> windows_;
   HandleRegistry<tabs::TabInterface> tabs_;

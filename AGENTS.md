@@ -28,7 +28,8 @@ Read `docs/plan.md` for the whole plan and `docs/bakeoff.md` for the bake-off ru
 | `scripts/` | doctor and page generator |
 | `engine/` | The engine: our layer inside Chrome (`src/jaal`), the C header (`public/jaal_engine.h`), Chrome patches (`patches/`), the Chromium lock and its scripts. Plan: `docs/engine.md` |
 | `crates/jaal-engine-sys`, `crates/jaal-engine` | Rust bindings for `jaal_engine.h` (generated) and the safe API over them |
-| `crates/jaal-ui-hello` | The smallest UI library (`jaal_ui.dll`): one window, one tab. The engine acceptance run drives it |
+| `crates/jaal-ui-hello` | The smallest UI library (`jaal_ui_hello.dll`): one window, one tab. M1's acceptance run copies it in as `jaal_ui.dll` and drives it |
+| `crates/jaal-ui` | The UI library (`jaal_ui.dll`): GPUI inside the engine's browser process. The sidebar (`shell.rs`), the command bar (`command_bar.rs`), colors from the design (`theme.rs`). The engine keeps its GPUI windows as children of its own window |
 
 Shared code goes in `bakeoff/shared` only when two variants really use it.
 
@@ -46,6 +47,10 @@ Shared code goes in `bakeoff/shared` only when two variants really use it.
   - `bun engine/scripts/check.ts` fails if the checkout differs from what the repo says. Run it before every engine PR.
   - `bun engine/scripts/build.ts` builds `out/Release` (about 2 to 4 minutes after a change to `//jaal`; a first build takes hours).
   - `cargo build -p jaal-ui-hello --release`, plus `--features wrong-abi --target-dir target/wrong-abi`, then `bun engine/scripts/acceptance.ts` runs M1's checks against the real engine. It takes the foreground for a few seconds.
+  - `cargo build -p jaal-ui --release`, then `bun engine/scripts/acceptance-m2.ts` runs M2's checks: it drives the real window with mouse and keys for about three minutes, so don't touch the laptop meanwhile. For its stack-sample check, also build the UI with symbols: `cargo build -p jaal-ui --release --target-dir target/symbols --config "profile.release.debug='line-tables-only'"`. `--save-screens` refreshes `bakeoff/results/screens/m2-*.png`.
+  - `bun engine/scripts/bench.ts --runs 5` measures jaal on the engine: start, memory, idle CPU and the sidebar scroll run (about 8 minutes; leave the laptop alone). What each number means is at the top of the script.
+  - To look at the browser yourself: copy `target/release/jaal_ui.dll` to `out\Release\jaal_ui.dll` in the checkout and start `out\Release\chrome.exe --user-data-dir=<a folder under target/profiles>`. `crates/jaal-ui/src/lib.rs` lists the `JAAL_UI_*` variables (pages to open, theme, a log file).
+  - `engine/scripts/win-input.ps1` is the input and screenshot helper both acceptance runs use. A running screen saver blocks input and screenshots; `win-input.ps1 wake` closes it.
   - After changing `jaal_engine.h`, run `bun engine/scripts/bindgen.ts` (needs `bindgen-cli` and libclang; `--check` tells you if the committed bindings are stale).
 
 ## Proving a change works

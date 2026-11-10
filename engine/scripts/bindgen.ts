@@ -24,6 +24,11 @@ const r = Bun.spawnSync(
     // whose addresses aren't meaningful to compare.
     "--with-derive-custom-struct",
     "jaal_handle|jaal_rect=PartialEq,Eq,Hash",
+    "--with-derive-custom-struct",
+    "jaal_placement|jaal_window_options=PartialEq,Eq",
+    // These hold floats, so no Eq.
+    "--with-derive-custom-struct",
+    "jaal_view_options|jaal_window_style=PartialEq",
     "--no-prepend-enum-name",
     // Newtype enums, not Rust enums: a newer engine may send a value this
     // build doesn't know, which a Rust enum can't hold.

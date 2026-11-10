@@ -1,0 +1,27 @@
+[package]
+name = "jaal-ui"
+version = "0.1.0"
+description = "jaal's UI library: GPUI running inside the engine's browser process"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+# The engine loads jaal_ui.dll / libjaal_ui.dylib from next to itself.
+name = "jaal_ui"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+jaal-engine = { path = "../jaal-engine" }
+jaal-bakeoff-shared.workspace = true
+# The same features as the bake-off's GPUI variants, so the workspace builds
+# one gpui.
+gpui = { version = "=0.2.2", default-features = false, features = ["runtime_shaders", "font-kit"] }
+raw-window-handle = "0.6"
+futures = "0.3"
+unicode-segmentation = "1.10"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+] }

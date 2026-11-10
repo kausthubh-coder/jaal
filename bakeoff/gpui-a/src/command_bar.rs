@@ -12,11 +12,15 @@ use gpui::{
 };
 use jaal_bakeoff_shared::TabId;
 use jaal_gpui_cef::text_input::{TextInput, TextInputEvent};
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::ffi::c_void;
 
 const TEXT: u32 = 0x1f1c18;
 const TEXT_MUTED: u32 = 0x6f6961;
+
+#[cfg(target_os = "macos")]
+const NEW_TAB_HINT: &str = "⌘T  New tab";
+#[cfg(target_os = "windows")]
+const NEW_TAB_HINT: &str = "Ctrl+T  New tab";
 
 pub struct CommandBar {
     owner: BrowserHandle,
@@ -52,12 +56,14 @@ impl CommandBar {
             titlebar: None,
             focus: true,
             show: true,
-            // An NSPanel: it can be key without the app's main window
-            // looking inactive behind it.
+            // An NSPanel on macOS: it can be key without the app's main
+            // window looking inactive behind it. A tool window on Windows:
+            // no taskbar button.
             kind: WindowKind::PopUp,
             is_movable: false,
             is_resizable: false,
             is_minimizable: false,
+            // NSVisualEffectView on macOS, DWM's acrylic blur on Windows.
             window_background: WindowBackgroundAppearance::Blurred,
             ..Default::default()
         };
@@ -83,10 +89,7 @@ impl CommandBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let gpui_view = match HasWindowHandle::window_handle(window).map(|h| h.as_raw()) {
-            Ok(RawWindowHandle::AppKit(handle)) => handle.ns_view.as_ptr(),
-            _ => panic!("gpui-a runs on macOS only"),
-        };
+        let gpui_view = jaal_gpui_cef::native_view(window);
         let input = cx.new(|cx| {
             TextInput::new(
                 "Search, enter a URL, or pick a tab",
@@ -205,7 +208,11 @@ impl Render for CommandBar {
             .size_full()
             .flex()
             .flex_col()
-            .rounded_xl()
+            // Windows 11 rounds the window itself with an 8 px radius (see
+            // overlay.rs); a larger one here would leave bare blur in the
+            // corners.
+            .when(cfg!(target_os = "macos"), |d| d.rounded_xl())
+            .when(cfg!(target_os = "windows"), |d| d.rounded_lg())
             .on_action(move |_: &NewTab, _, cx| forward(cx, |b, w, cx| b.new_tab(w, cx)))
             .on_action(move |_: &CloseTab, _, cx| forward(cx, |b, w, cx| b.close_active_tab(w, cx)))
             .on_action(move |_: &ToggleCommandBar, _, cx| {
@@ -259,7 +266,7 @@ impl Render for CommandBar {
                     .bg(rgba(0x0000000a))
                     .child("↵  Open")
                     .child("esc  Close")
-                    .child("⌘T  New tab"),
+                    .child(NEW_TAB_HINT),
             )
     }
 }

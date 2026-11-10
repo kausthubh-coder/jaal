@@ -40,6 +40,15 @@ impl WindowsWindowInner {
     ) -> LRESULT {
         let handled = match msg {
             WM_ACTIVATE => self.handle_activate_msg(wparam),
+            // jaal: a child window (GPUI inside a host's window) never gets
+            // WM_ACTIVATE. Keyboard focus is what "active" means for it.
+            WM_SETFOCUS | WM_KILLFOCUS if is_child_window(handle) => {
+                self.handle_child_focus_msg(msg == WM_SETFOCUS)
+            }
+            // jaal: only top-level windows get WM_DPICHANGED.
+            WM_DPICHANGED_AFTERPARENT if is_child_window(handle) => {
+                self.handle_dpi_changed_after_parent_msg(handle)
+            }
             WM_CREATE => self.handle_create_msg(handle),
             WM_MOVE => self.handle_move_msg(handle, lparam),
             WM_SIZE => self.handle_size_msg(wparam, lparam),
@@ -55,7 +64,7 @@ impl WindowsWindowInner {
             WM_CLOSE => self.handle_close_msg(),
             WM_DESTROY => self.handle_destroy_msg(handle),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(handle, lparam, wparam),
-            WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(),
+            WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(handle),
             WM_NCMOUSEMOVE => self.handle_nc_mouse_move_msg(handle, lparam),
             // Treat double click as a second single click, since we track the double clicks ourselves.
             // If you don't interact with any elements, this will fall through to the windows default
@@ -89,6 +98,15 @@ impl WindowsWindowInner {
             WM_MBUTTONUP => self.handle_mouse_up_msg(handle, MouseButton::Middle, lparam),
             WM_XBUTTONUP => {
                 self.handle_xbutton_msg(handle, wparam, lparam, Self::handle_mouse_up_msg)
+            }
+            // jaal: Windows sends the wheel to the window with keyboard
+            // focus. When that is a child window and the pointer is over the
+            // host's own content, the wheel is the host's: DefWindowProc
+            // passes it up to the parent.
+            WM_MOUSEWHEEL | WM_MOUSEHWHEEL
+                if is_child_window(handle) && !wheel_is_over_window(handle, lparam) =>
+            {
+                None
             }
             WM_MOUSEWHEEL => self.handle_mouse_wheel_msg(handle, wparam, lparam),
             WM_MOUSEHWHEEL => self.handle_mouse_horizontal_wheel_msg(handle, wparam, lparam),
@@ -315,14 +333,35 @@ impl WindowsWindowInner {
         if handled { Some(0) } else { Some(1) }
     }
 
-    fn handle_mouse_leave_msg(&self) -> Option<isize> {
+    fn handle_mouse_leave_msg(&self, handle: HWND) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
         lock.hovered = false;
+        let scale_factor = lock.scale_factor;
         if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
             drop(lock);
             callback(false);
             self.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+        } else {
+            drop(lock);
         }
+
+        // jaal: upstream stops here, so whatever was under the pointer stays
+        // drawn as hovered until the pointer comes back. Tell the window
+        // where the pointer went, as the Mac platform does.
+        let mut cursor = POINT::default();
+        unsafe {
+            GetCursorPos(&mut cursor).log_err();
+            ScreenToClient(handle, &mut cursor).ok().log_err();
+        }
+        let Some(mut func) = self.state.borrow_mut().callbacks.input.take() else {
+            return Some(0);
+        };
+        func(PlatformInput::MouseExited(MouseExitEvent {
+            position: logical_point(cursor.x as f32, cursor.y as f32, scale_factor),
+            pressed_button: None,
+            modifiers: current_modifiers(),
+        }));
+        self.state.borrow_mut().callbacks.input = Some(func);
 
         Some(0)
     }
@@ -345,6 +384,10 @@ impl WindowsWindowInner {
 
         if handled {
             lock.system_key_handled = true;
+            // jaal: the host already translated this key into a WM_SYSCHAR.
+            if is_embedded() {
+                discard_translated_chars(handle, WM_SYSCHAR);
+            }
             Some(0)
         } else {
             // we need to call `DefWindowProcW`, or we will lose the system-wide `Alt+F4`, `Alt+{other keys}`
@@ -386,7 +429,10 @@ impl WindowsWindowInner {
             .flatten()
             .is_some();
         if is_composing {
-            translate_message(handle, wparam, lparam);
+            // jaal: in embedded mode the host's loop has translated it.
+            if !is_embedded() {
+                translate_message(handle, wparam, lparam);
+            }
             return Some(0);
         }
 
@@ -398,7 +444,21 @@ impl WindowsWindowInner {
 
         self.state.borrow_mut().callbacks.input = Some(func);
 
-        if handled {
+        // jaal: GPUI's own loop doesn't call TranslateMessage, so GPUI
+        // translates a key down here, and only when nothing handled it. A
+        // host's loop (Chromium's) translates every key before dispatching
+        // it: the WM_CHAR is already queued. Translating again would type
+        // each character twice, so embedded mode never translates, and takes
+        // the queued WM_CHAR back out when the key was handled.
+        if is_embedded() {
+            if handled {
+                discard_translated_chars(handle, WM_CHAR);
+                discard_translated_chars(handle, WM_DEADCHAR);
+                Some(0)
+            } else {
+                Some(1)
+            }
+        } else if handled {
             Some(0)
         } else {
             translate_message(handle, wparam, lparam);
@@ -761,6 +821,44 @@ impl WindowsWindowInner {
             .detach();
 
         None
+    }
+
+    // jaal: see the WM_SETFOCUS arm in `handle_msg`.
+    fn handle_child_focus_msg(self: &Rc<Self>, focused: bool) -> Option<isize> {
+        let this = self.clone();
+        self.executor
+            .spawn(async move {
+                let mut lock = this.state.borrow_mut();
+                if let Some(mut func) = lock.callbacks.active_status_change.take() {
+                    drop(lock);
+                    func(focused);
+                    this.state.borrow_mut().callbacks.active_status_change = Some(func);
+                }
+            })
+            .detach();
+        None
+    }
+
+    // jaal: the parent moved to a monitor with another DPI. The host resizes
+    // this window right after, but a WM_SIZE only follows if the pixel size
+    // changes, so the new scale is applied here.
+    fn handle_dpi_changed_after_parent_msg(&self, handle: HWND) -> Option<isize> {
+        let new_scale_factor =
+            unsafe { GetDpiForWindow(handle) } as f32 / USER_DEFAULT_SCREEN_DPI as f32;
+        let mut lock = self.state.borrow_mut();
+        if lock.scale_factor == new_scale_factor {
+            return Some(0);
+        }
+        lock.scale_factor = new_scale_factor;
+        drop(lock);
+        let mut rect = RECT::default();
+        unsafe { GetClientRect(handle, &mut rect).log_err() };
+        let device_size = size(
+            DevicePixels(rect.right.max(1)),
+            DevicePixels(rect.bottom.max(1)),
+        );
+        self.handle_size_change(device_size, new_scale_factor, true);
+        Some(0)
     }
 
     fn handle_create_msg(&self, handle: HWND) -> Option<isize> {
@@ -1281,6 +1379,29 @@ impl WindowsWindowInner {
     }
 }
 
+// jaal: whether GPUI is drawing into a child of a host's window.
+fn is_child_window(handle: HWND) -> bool {
+    (unsafe { GetWindowLongPtrW(handle, GWL_STYLE) } as u32) & WS_CHILD.0 != 0
+}
+
+// jaal: whether a wheel message's pointer (screen coordinates) is over this
+// window.
+fn wheel_is_over_window(handle: HWND, lparam: LPARAM) -> bool {
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(handle, &mut rect).log_err() };
+    let (x, y) = (lparam.signed_loword() as i32, lparam.signed_hiword() as i32);
+    x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
+}
+
+// jaal: removes the character message the host's TranslateMessage queued for
+// a key down that GPUI handled.
+fn discard_translated_chars(handle: HWND, message: u32) {
+    let mut msg = MSG::default();
+    unsafe {
+        while PeekMessageW(&mut msg, Some(handle), message, message, PM_REMOVE).as_bool() {}
+    }
+}
+
 #[inline]
 fn translate_message(handle: HWND, wparam: WPARAM, lparam: LPARAM) {
     let msg = MSG {
@@ -1324,7 +1445,12 @@ where
             }))
         }
         VK_PACKET => {
-            translate_message(handle, wparam, lparam);
+            // jaal: a key that carries a character itself (injected text,
+            // the emoji panel). In embedded mode the host's loop has already
+            // translated it into its WM_CHAR.
+            if !is_embedded() {
+                translate_message(handle, wparam, lparam);
+            }
             None
         }
         VK_CAPITAL => {

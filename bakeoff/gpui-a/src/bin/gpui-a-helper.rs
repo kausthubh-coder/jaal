@@ -1,5 +1,9 @@
-//! The CEF subprocess (renderer, GPU, utility). bundle-cef-app copies it into
-//! the bundle's helper apps. It uses no GPUI code.
+//! The CEF subprocess (renderer, GPU, utility). On macOS bundle-cef-app
+//! copies it into the bundle's helper apps; on Windows it sits next to
+//! gpui-a.exe. It uses no GPUI code.
+
+// Without it every renderer would open a console window on Windows.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 use cef::{args::Args, *};
 

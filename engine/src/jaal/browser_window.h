@@ -8,13 +8,22 @@
 #include <vector>
 
 #include "base/memory/raw_ptr.h"
+#include "base/memory/weak_ptr.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
 #include "chrome/browser/ui/unload_controller.h"
+#include "jaal/public/jaal_engine.h"
 #include "ui/base/accelerators/accelerator.h"
+#include "ui/events/event_handler.h"
 #include "ui/gfx/geometry/rect.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
+
+#if BUILDFLAG(IS_WIN)
+#include "ui/base/win/hwnd_subclass.h"
+#endif
 
 class BrowserWindowInterface;
 
@@ -28,9 +37,10 @@ class JaalLocationBar;
 class JaalModalDialogHost;
 class PageAreaView;
 
-// A browser window with no Chrome UI: a Views widget whose only content is the
-// active tab's page. The app draws everything else. Each top-level window is
-// a views::Widget so Chrome's dropdowns and dialogs have a parent to attach to.
+// A browser window with no Chrome UI: a Views widget that holds the active
+// tab's page and, above it, the app's own native views (the sidebar, the
+// command bar), which the app draws. Each top-level window is a views::Widget
+// so Chrome's dropdowns and dialogs have a parent to attach to.
 //
 // Most method bodies are copied from Chrome's own toolbar-less window,
 // WebUIBrowserWindow (chrome/browser/ui/webui_browser/webui_browser_window.cc,
@@ -40,7 +50,11 @@ class PageAreaView;
 class JaalBrowserWindow : public BrowserWindow,
                           public ui::AcceleratorProvider,
                           public ExclusiveAccessContext,
-                          public views::WidgetObserver {
+                          public views::WidgetObserver,
+#if BUILDFLAG(IS_WIN)
+                          public ui::HWNDMessageFilter,
+#endif
+                          public ui::EventHandler {
  public:
   explicit JaalBrowserWindow(BrowserWindowInterface* browser);
   JaalBrowserWindow(const JaalBrowserWindow&) = delete;
@@ -55,7 +69,24 @@ class JaalBrowserWindow : public BrowserWindow,
 
   // Where the page goes in the client area. Null fills the window.
   void SetPageRect(std::optional<gfx::Rect> rect);
+  void SetPagePlacement(const jaal_placement& placement);
   gfx::Rect GetContentsBoundsInScreen() const;
+  // The page's rectangle in the window's client area.
+  gfx::Rect GetContentsBoundsInWidget() const;
+
+  // The app's native views inside this window (jaal_engine.h).
+  jaal_status AttachView(void* native_view, const jaal_view_options& options);
+  jaal_status UpdateView(void* native_view, const jaal_view_options& options);
+  jaal_status DetachView(void* native_view);
+  void FocusPage();
+  void SetStyle(const jaal_window_style& style);
+  void BeginDrag();
+
+  jaal_window_state GetState() const;
+  void SetState(jaal_window_state state);
+  // The client area in DIPs, and physical pixels per DIP.
+  gfx::Size GetClientSize() const;
+  float GetScale() const;
 
   // BrowserWindow:
   gfx::NativeWindow GetNativeWindow() const override;
@@ -209,6 +240,20 @@ class JaalBrowserWindow : public BrowserWindow,
   // views::WidgetObserver:
   void OnWidgetBoundsChanged(views::Widget* widget,
                              const gfx::Rect& new_bounds) override;
+  void OnWidgetActivationChanged(views::Widget* widget, bool active) override;
+  void OnWidgetShowStateChanged(views::Widget* widget) override;
+
+  // ui::EventHandler:
+  void OnMouseEvent(ui::MouseEvent* event) override;
+
+#if BUILDFLAG(IS_WIN)
+  // ui::HWNDMessageFilter:
+  bool FilterMessage(HWND hwnd,
+                     UINT message,
+                     WPARAM w_param,
+                     LPARAM l_param,
+                     LRESULT* l_result) override;
+#endif
 
  protected:
   // BrowserWindow:
@@ -220,6 +265,7 @@ class JaalBrowserWindow : public BrowserWindow,
   void PaintAsActiveChanged();
   void OnWindowCloseRequested(views::Widget::ClosedReason close_reason);
   void ProcessFullscreen(bool fullscreen);
+  void RaiseAttachedViewsLater();
 
   const raw_ptr<BrowserWindowInterface> browser_;
   std::unique_ptr<WidgetDelegate> widget_delegate_;
@@ -229,6 +275,14 @@ class JaalBrowserWindow : public BrowserWindow,
   std::unique_ptr<JaalLocationBar> location_bar_;
   std::unique_ptr<JaalModalDialogHost> modal_dialog_host_;
   base::CallbackListSubscription paint_as_active_subscription_;
+  // True while one of the app's views has keyboard focus (Windows).
+  bool app_view_has_focus_ = false;
+  // No system title bar: see jaal_window_options.
+  bool frameless_ = false;
+  // True while a wheel message is being handed to one of the app's views.
+  bool forwarding_wheel_ = false;
+
+  base::WeakPtrFactory<JaalBrowserWindow> weak_factory_{this};
 };
 
 }  // namespace jaal

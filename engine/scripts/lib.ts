@@ -72,3 +72,12 @@ export function checkTreeCommit(src: string) {
     throw new Error(`${src} is at ${head}, chromium.lock wants ${want} (${lock().version})`);
   }
 }
+
+// Tracked files in the checkout that differ from its HEAD commit. Compared
+// with HEAD, not the index: a staged edit is still an edit the build compiles.
+export function modifiedTrackedFiles(src: string): string[] {
+  return run(["git", "diff", "--name-only", "HEAD"], src)
+    .out.split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+}

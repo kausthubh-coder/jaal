@@ -1,22 +1,21 @@
 //! The main window: GPUI draws the sidebar and the frame around the page;
-//! each tab is a CEF browser whose NSView sits over the page area. Only the
-//! active tab's view is visible.
+//! each tab is a CEF browser whose native view (NSView, or HWND on Windows)
+//! sits over the page area. Only the active tab's view is visible.
 
 use crate::command_bar::CommandBar;
 use crate::overlay;
 use futures::StreamExt;
 use futures::channel::mpsc;
 use gpui::{
-    App, Bounds, Context, Entity, FocusHandle, Focusable, KeyBinding, MouseButton, Pixels,
-    SharedString, Subscription, UniformListScrollHandle, Window, WindowHandle, actions, canvas,
-    div, point, prelude::*, px, rgb, rgba, size, uniform_list,
+    App, Bounds, Context, Entity, FocusHandle, Focusable, KeyBinding, Pixels, SharedString,
+    Subscription, UniformListScrollHandle, Window, WindowHandle, actions, canvas, div, point,
+    prelude::*, px, rgb, rgba, size, uniform_list,
 };
 use jaal_bakeoff_shared::bench::{mark, mark_at};
 use jaal_bakeoff_shared::bench_modes::{self as bench, BenchConfig};
 use jaal_bakeoff_shared::{TabId, Tabs, fake_rows, normalize_url, test_page_url};
 use jaal_gpui_cef::text_input::{TextInput, TextInputEvent};
 use jaal_gpui_cef::{BrowserEvent, ChildBrowser};
-use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
@@ -36,10 +35,11 @@ actions!(gpui_a, [NewTab, CloseTab, ToggleCommandBar, Quit]);
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-t", NewTab, None),
-        KeyBinding::new("cmd-w", CloseTab, None),
-        KeyBinding::new("cmd-k", ToggleCommandBar, None),
-        KeyBinding::new("cmd-q", Quit, None),
+        // secondary: Cmd on macOS, Ctrl on Windows.
+        KeyBinding::new("secondary-t", NewTab, None),
+        KeyBinding::new("secondary-w", CloseTab, None),
+        KeyBinding::new("secondary-k", ToggleCommandBar, None),
+        KeyBinding::new("secondary-q", Quit, None),
     ]);
 }
 
@@ -90,10 +90,8 @@ impl BrowserWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let gpui_view = match HasWindowHandle::window_handle(window).map(|h| h.as_raw()) {
-            Ok(RawWindowHandle::AppKit(handle)) => handle.ns_view.as_ptr(),
-            _ => panic!("gpui-a runs on macOS only"),
-        };
+        let gpui_view = jaal_gpui_cef::native_view(window);
+        #[cfg(target_os = "macos")]
         eprintln!("gpui-a: main window CGWindowID {}", unsafe {
             jaal_gpui_cef::window_number(gpui_view)
         });
@@ -124,14 +122,23 @@ impl BrowserWindow {
                 cx,
             )
         });
-        let subscriptions = vec![cx.subscribe_in(
-            &url_input,
-            window,
-            |this, _input, event: &TextInputEvent, window, cx| match event {
-                TextInputEvent::Submit(text) => this.navigate(text, window, cx),
-                TextInputEvent::Cancel => this.show_active(window, cx),
-            },
-        )];
+        let subscriptions = vec![
+            cx.subscribe_in(
+                &url_input,
+                window,
+                |this, _input, event: &TextInputEvent, window, cx| match event {
+                    TextInputEvent::Submit(text) => this.navigate(text, window, cx),
+                    TextInputEvent::Cancel => this.show_active(window, cx),
+                },
+            ),
+            // Windows doesn't carry an owned window along when its owner
+            // moves (see overlay.rs); AppKit does, and a resize re-renders.
+            cx.observe_window_bounds(window, |this, _window, cx| {
+                if cfg!(target_os = "windows") {
+                    this.place_command_bar(cx);
+                }
+            }),
+        ];
 
         let rows: Rc<[SharedString]> = fake_rows(FAKE_ROWS)
             .into_iter()
@@ -408,6 +415,21 @@ impl BrowserWindow {
         cx.notify();
     }
 
+    /// Puts an open command bar back over the page, after the main window
+    /// moved.
+    fn place_command_bar(&self, cx: &App) {
+        let Some(page) = self.page_bounds.get() else {
+            return;
+        };
+        let Some(bar_view) = self
+            .command_bar
+            .and_then(|bar| bar.read(cx).ok().map(|bar| bar.gpui_view()))
+        else {
+            return;
+        };
+        unsafe { overlay::place(self.gpui_view, bar_view, page) };
+    }
+
     pub fn command_bar_is_open(&self) -> bool {
         self.command_bar.is_some()
     }
@@ -533,7 +555,7 @@ impl BrowserWindow {
         &self.url_input
     }
 
-    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar(&mut self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.tabs.active();
         let tabs = self.tabs.list().iter().map(|tab| {
             let id = tab.id;
@@ -562,14 +584,7 @@ impl BrowserWindow {
             .flex()
             .flex_col()
             .px(px(10.))
-            .child(
-                // Title bar strip: traffic lights on the left, drag anywhere.
-                div()
-                    .h(px(44.))
-                    .w_full()
-                    .flex_none()
-                    .on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move()),
-            )
+            .child(title_strip(window))
             .child(
                 div()
                     .h(px(34.))
@@ -627,6 +642,68 @@ impl BrowserWindow {
     }
 }
 
+/// Title bar strip: traffic lights on the left, drag anywhere.
+#[cfg(target_os = "macos")]
+fn title_strip(_window: &Window) -> impl IntoElement {
+    div()
+        .h(px(44.))
+        .w_full()
+        .flex_none()
+        .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
+            window.start_window_move()
+        })
+}
+
+/// Title bar strip: drag anywhere, minimize, maximize and close on the right.
+/// The window has no system title bar, so GPUI draws the buttons and tells
+/// Windows where they are, which keeps snap layouts and double-click to
+/// maximize working.
+#[cfg(target_os = "windows")]
+fn title_strip(window: &Window) -> impl IntoElement {
+    use gpui::WindowControlArea;
+
+    // Segoe Fluent Icons' caption glyphs, what Windows 11's own title bars use.
+    let maximize = if window.is_maximized() {
+        "\u{E923}"
+    } else {
+        "\u{E922}"
+    };
+    let button = |id: &'static str, glyph: &'static str, area: WindowControlArea| {
+        div()
+            .id(id)
+            .w(px(34.))
+            .h(px(28.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_md()
+            .window_control_area(area)
+            .child(glyph)
+    };
+    div()
+        .h(px(44.))
+        .w_full()
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_end()
+        .window_control_area(WindowControlArea::Drag)
+        .font_family("Segoe Fluent Icons")
+        .text_size(px(10.))
+        .text_color(rgb(TEXT))
+        .child(
+            button("minimize", "\u{E921}", WindowControlArea::Min)
+                .hover(|d| d.bg(rgba(0x0000000f))),
+        )
+        .child(
+            button("maximize", maximize, WindowControlArea::Max).hover(|d| d.bg(rgba(0x0000000f))),
+        )
+        .child(
+            button("close", "\u{E8BB}", WindowControlArea::Close)
+                .hover(|d| d.bg(rgb(0xc42b1c)).text_color(rgb(0xffffff))),
+        )
+}
+
 fn set_page_frame(page: &ChildBrowser, bounds: Bounds<Pixels>) {
     page.set_frame(
         f64::from(f32::from(bounds.origin.x)),
@@ -645,7 +722,7 @@ fn finish_quit(cx: &mut Context<BrowserWindow>) {
 }
 
 impl Render for BrowserWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.bench_running && jaal_bakeoff_shared::bench::frames_enabled() {
             mark("frame");
         }
@@ -673,12 +750,17 @@ impl Render for BrowserWindow {
                 this.toggle_command_bar(window, cx)
             }))
             .on_action(cx.listener(|this, _: &Quit, _, cx| this.quit(cx)))
+            // A click on GPUI's part of the window takes keyboard focus back
+            // from the page. AppKit does this by itself; Windows doesn't.
+            .capture_any_mouse_down(move |_, _, _| unsafe {
+                jaal_gpui_cef::focus_gpui_view(gpui_view)
+            })
             .size_full()
             .flex()
             .flex_row()
             .bg(rgb(SIDEBAR_BG))
             .font_family(".SystemUIFont")
-            .child(self.render_sidebar(cx))
+            .child(self.render_sidebar(window, cx))
             .child(
                 div()
                     .flex_1()

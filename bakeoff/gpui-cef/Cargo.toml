@@ -9,8 +9,20 @@ publish.workspace = true
 cef.workspace = true
 # runtime_shaders: this Mac has no full Xcode, so no offline Metal compiler.
 gpui = { version = "=0.2.2", default-features = false, features = ["runtime_shaders", "font-kit"] }
+raw-window-handle = "0.6"
 unicode-segmentation = "1.10"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.3"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "objc2-core-foundation"] }
+
+# The version the cef crate uses, so HWNDs pass between them as is.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }

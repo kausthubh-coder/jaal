@@ -7,8 +7,9 @@ license.workspace = true
 publish.workspace = true
 
 [lib]
-# The engine loads jaal_ui.dll / libjaal_ui.dylib from next to itself.
-name = "jaal_ui"
+# The acceptance run copies this next to the engine as jaal_ui.dll, the name
+# the engine loads. crates/jaal-ui builds the real jaal_ui.
+name = "jaal_ui_hello"
 crate-type = ["cdylib"]
 
 [features]
