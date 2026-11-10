@@ -28,6 +28,17 @@ use windows::{
 
 use crate::*;
 
+// jaal: true once `run_embedded` has started GPUI inside a host's message
+// loop. The host's loop calls TranslateMessage on every message before
+// dispatching it, which changes how key messages must be handled; see
+// `handle_keydown_msg` and JAAL.md.
+pub(crate) static EMBEDDED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn is_embedded() -> bool {
+    EMBEDDED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub(crate) struct WindowsPlatform {
     inner: Rc<WindowsPlatformInner>,
     raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
@@ -325,6 +336,7 @@ impl Platform for WindowsPlatform {
     // loop: the host (Chromium's message pump) already dispatches this
     // thread's window messages, GPUI's among them. See JAAL.md.
     fn run_embedded(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
+        EMBEDDED.store(true, std::sync::atomic::Ordering::Relaxed);
         on_finish_launching();
         self.begin_vsync_thread();
     }

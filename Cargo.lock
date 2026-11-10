@@ -2771,10 +2771,12 @@ dependencies = [
 name = "jaal-ui"
 version = "0.1.0"
 dependencies = [
+ "futures",
  "gpui",
  "jaal-bakeoff-shared",
  "jaal-engine",
  "raw-window-handle",
+ "unicode-segmentation",
  "windows-sys 0.61.2",
 ]
 

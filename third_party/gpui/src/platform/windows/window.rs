@@ -693,6 +693,14 @@ impl PlatformWindow for WindowsWindow {
         self.0
             .executor
             .spawn(async move {
+                // jaal: a child window (GPUI inside a host's window) is
+                // placed and shown by the host. Activating it means taking
+                // keyboard focus, nothing else.
+                if (unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) } as u32) & WS_CHILD.0 != 0 {
+                    unsafe { SetFocus(Some(hwnd)).log_err() };
+                    return;
+                }
+
                 this.set_window_placement().log_err();
 
                 unsafe {

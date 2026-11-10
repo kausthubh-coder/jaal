@@ -1,5 +1,6 @@
 #include "jaal/engine.h"
 
+#include <cstddef>
 #include <utility>
 
 #include "base/check.h"
@@ -23,6 +24,7 @@
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/reload_type.h"
 #include "content/public/browser/web_contents.h"
 #include "jaal/browser_window.h"
 #include "ui/base/page_transition_types.h"
@@ -40,6 +42,15 @@ namespace {
 // Every call must come from the UI thread (docs/engine.md › The C API, rule 1).
 #define JAAL_CHECK_UI_THREAD() \
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI)
+
+// Marks the time the app spends inside one engine call.
+class ScopedApiCall {
+ public:
+  ScopedApiCall() { Engine::Get().EnterApiCall(); }
+  ScopedApiCall(const ScopedApiCall&) = delete;
+  ScopedApiCall& operator=(const ScopedApiCall&) = delete;
+  ~ScopedApiCall() { Engine::Get().LeaveApiCall(); }
+};
 
 }  // namespace
 
@@ -75,6 +86,8 @@ void Engine::OnMainLoopEnded() {
   closing_all_browsers_subscription_ = {};
   sink_ = nullptr;
   sink_user_data_ = nullptr;
+  shortcut_filter_ = nullptr;
+  shortcut_filter_user_data_ = nullptr;
 }
 
 void Engine::OnWindowCreated(JaalBrowserWindow* window) {
@@ -86,6 +99,41 @@ void Engine::OnWindowDestroyed(JaalBrowserWindow* window) {
   window->browser()->GetTabStripModel()->RemoveObserver(this);
   const jaal_handle handle = windows_.Remove(window);
   PostEvent({.kind = JAAL_EVENT_WINDOW_CLOSED, .window = handle});
+}
+
+void Engine::OnWindowStateChanged(JaalBrowserWindow* window) {
+  const std::optional<jaal_handle> handle = windows_.Find(window);
+  if (!handle) {
+    return;
+  }
+  PendingEvent event = {.kind = JAAL_EVENT_WINDOW_STATE, .window = *handle};
+  event.window_active = window->IsActive();
+  event.window_state = window->GetState();
+  event.client_width = window->GetClientSize().width();
+  event.client_height = window->GetClientSize().height();
+  event.scale = window->GetScale();
+  PostEvent(std::move(event));
+}
+
+bool Engine::OnPageKeyDown(JaalBrowserWindow* window,
+                           int key_code,
+                           int blink_modifiers,
+                           bool before_page) {
+  // Blink's shift, control, alt and meta bits are JAAL_MOD_*'s.
+  const uint32_t modifiers = static_cast<uint32_t>(blink_modifiers) & 0xFu;
+  if (before_page &&
+      (!shortcut_filter_ ||
+       !shortcut_filter_(shortcut_filter_user_data_.get(),
+                         static_cast<uint32_t>(key_code), modifiers))) {
+    return false;
+  }
+  PendingEvent event = {.kind = JAAL_EVENT_KEY};
+  event.window = windows_.Find(window).value_or(jaal_handle{0, 0});
+  event.key_code = static_cast<uint32_t>(key_code);
+  event.modifiers = modifiers;
+  event.key_reserved = before_page;
+  PostEvent(std::move(event));
+  return before_page;
 }
 
 void Engine::OnTabStripModelChanged(TabStripModel* tab_strip_model,
@@ -139,6 +187,8 @@ Engine::PendingEvent Engine::TabStateEvent(tabs::TabInterface* tab,
   event.title = base::UTF16ToUTF8(contents->GetTitle());
   event.loading = contents->IsLoading();
   event.active = tab->IsActivated();
+  event.can_go_back = contents->GetController().CanGoBack();
+  event.can_go_forward = contents->GetController().CanGoForward();
   return event;
 }
 
@@ -170,6 +220,16 @@ void Engine::DeliverEvent(PendingEvent event) {
   out.title = event.title.empty() ? nullptr : event.title.c_str();
   out.loading = event.loading;
   out.active = event.active;
+  out.key_code = event.key_code;
+  out.modifiers = event.modifiers;
+  out.key_reserved = event.key_reserved;
+  out.window_active = event.window_active;
+  out.window_state = event.window_state;
+  out.client_width = event.client_width;
+  out.client_height = event.client_height;
+  out.scale = event.scale;
+  out.can_go_back = event.can_go_back;
+  out.can_go_forward = event.can_go_forward;
   sink_(sink_user_data_.get(), &out);
 }
 
@@ -228,8 +288,16 @@ jaal_status Engine::SetEventSink(jaal_event_sink sink, void* user_data) {
 }
 
 jaal_status Engine::WindowCreate(jaal_handle* out_window) {
+  const jaal_window_options options = {.struct_size =
+                                           sizeof(jaal_window_options)};
+  return WindowCreateWith(&options, out_window);
+}
+
+jaal_status Engine::WindowCreateWith(const jaal_window_options* options,
+                                     jaal_handle* out_window) {
   JAAL_CHECK_UI_THREAD();
-  if (!out_window) {
+  if (!out_window || !options ||
+      options->struct_size < sizeof(jaal_window_options)) {
     return JAAL_ERR_INVALID;
   }
   if (quitting_) {
@@ -243,8 +311,10 @@ jaal_status Engine::WindowCreate(jaal_handle* out_window) {
       BrowserWindowInterface::CreationStatus::kOk) {
     return JAAL_ERR_DENIED;
   }
+  creating_window_options_ = *options;
   BrowserWindowInterface* browser = CreateBrowserWindow(
       BrowserWindowCreateParams(*profile, /*from_user_gesture=*/true));
+  creating_window_options_ = {};
   JaalBrowserWindow* window = JaalBrowserWindow::FromBrowser(browser);
   if (!window) {
     // The window hook isn't installed, so Chrome made its own window.
@@ -252,6 +322,8 @@ jaal_status Engine::WindowCreate(jaal_handle* out_window) {
   }
   window->Show();
   *out_window = windows_.Find(window).value();
+  // The app lays its views out from this.
+  OnWindowStateChanged(window);
   return JAAL_OK;
 }
 
@@ -373,40 +445,247 @@ jaal_status Engine::TabLoad(jaal_handle handle, const char* url) {
   return JAAL_OK;
 }
 
+jaal_status Engine::SetShortcutFilter(jaal_shortcut_filter filter,
+                                      void* user_data) {
+  JAAL_CHECK_UI_THREAD();
+  shortcut_filter_ = filter;
+  shortcut_filter_user_data_ = user_data;
+  return JAAL_OK;
+}
+
+jaal_status Engine::WindowSetPagePlacement(jaal_handle handle,
+                                           jaal_placement placement) {
+  JAAL_CHECK_UI_THREAD();
+  JaalBrowserWindow* window = windows_.Get(handle);
+  if (!window) {
+    return JAAL_ERR_GONE;
+  }
+  window->SetPagePlacement(placement);
+  return JAAL_OK;
+}
+
+jaal_status Engine::WindowAttachView(jaal_handle handle,
+                                     void* native_view,
+                                     const jaal_view_options* options) {
+  JAAL_CHECK_UI_THREAD();
+  if (!native_view || !options ||
+      options->struct_size < sizeof(jaal_view_options)) {
+    return JAAL_ERR_INVALID;
+  }
+  JaalBrowserWindow* window = windows_.Get(handle);
+  return window ? window->AttachView(native_view, *options) : JAAL_ERR_GONE;
+}
+
+jaal_status Engine::WindowUpdateView(jaal_handle handle,
+                                     void* native_view,
+                                     const jaal_view_options* options) {
+  JAAL_CHECK_UI_THREAD();
+  if (!native_view || !options ||
+      options->struct_size < sizeof(jaal_view_options)) {
+    return JAAL_ERR_INVALID;
+  }
+  JaalBrowserWindow* window = windows_.Get(handle);
+  return window ? window->UpdateView(native_view, *options) : JAAL_ERR_GONE;
+}
+
+jaal_status Engine::WindowDetachView(jaal_handle handle, void* native_view) {
+  JAAL_CHECK_UI_THREAD();
+  if (!native_view) {
+    return JAAL_ERR_INVALID;
+  }
+  JaalBrowserWindow* window = windows_.Get(handle);
+  return window ? window->DetachView(native_view) : JAAL_ERR_GONE;
+}
+
+jaal_status Engine::WindowFocusPage(jaal_handle handle) {
+  JAAL_CHECK_UI_THREAD();
+  JaalBrowserWindow* window = windows_.Get(handle);
+  if (!window) {
+    return JAAL_ERR_GONE;
+  }
+  window->FocusPage();
+  return JAAL_OK;
+}
+
+jaal_status Engine::WindowSetState(jaal_handle handle,
+                                   jaal_window_state state) {
+  JAAL_CHECK_UI_THREAD();
+  JaalBrowserWindow* window = windows_.Get(handle);
+  if (!window) {
+    return JAAL_ERR_GONE;
+  }
+  if (state < JAAL_WINDOW_NORMAL || state > JAAL_WINDOW_FULLSCREEN) {
+    return JAAL_ERR_INVALID;
+  }
+  // Posted: a state change resizes the window at once, and the resize moves
+  // the app's views, which must not happen while the app is inside this call.
+  base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+      FROM_HERE, base::BindOnce(
+                     [](base::WeakPtr<Engine> engine, jaal_handle handle,
+                        jaal_window_state state) {
+                       if (!engine) {
+                         return;
+                       }
+                       if (JaalBrowserWindow* window =
+                               engine->windows_.Get(handle)) {
+                         window->SetState(state);
+                       }
+                     },
+                     weak_factory_.GetWeakPtr(), handle, state));
+  return JAAL_OK;
+}
+
+jaal_status Engine::WindowSetStyle(jaal_handle handle,
+                                   const jaal_window_style* style) {
+  JAAL_CHECK_UI_THREAD();
+  if (!style || style->struct_size < sizeof(jaal_window_style)) {
+    return JAAL_ERR_INVALID;
+  }
+  JaalBrowserWindow* window = windows_.Get(handle);
+  if (!window) {
+    return JAAL_ERR_GONE;
+  }
+  window->SetStyle(*style);
+  return JAAL_OK;
+}
+
+jaal_status Engine::TabNavigate(jaal_handle handle, jaal_nav_action action) {
+  JAAL_CHECK_UI_THREAD();
+  tabs::TabInterface* tab = tabs_.Get(handle);
+  if (!tab) {
+    return JAAL_ERR_GONE;
+  }
+  content::WebContents* contents = tab->GetContents();
+  content::NavigationController& controller = contents->GetController();
+  switch (action) {
+    case JAAL_NAV_BACK:
+      if (!controller.CanGoBack()) {
+        return JAAL_ERR_INVALID;
+      }
+      controller.GoBack();
+      return JAAL_OK;
+    case JAAL_NAV_FORWARD:
+      if (!controller.CanGoForward()) {
+        return JAAL_ERR_INVALID;
+      }
+      controller.GoForward();
+      return JAAL_OK;
+    case JAAL_NAV_RELOAD:
+      controller.Reload(content::ReloadType::NORMAL, /*check_for_repost=*/true);
+      return JAAL_OK;
+    case JAAL_NAV_STOP:
+      contents->Stop();
+      return JAAL_OK;
+  }
+  return JAAL_ERR_INVALID;
+}
+
+jaal_status Engine::WindowBeginDrag(jaal_handle handle) {
+  JAAL_CHECK_UI_THREAD();
+  JaalBrowserWindow* window = windows_.Get(handle);
+  if (!window) {
+    return JAAL_ERR_GONE;
+  }
+  window->BeginDrag();
+  return JAAL_OK;
+}
+
 namespace {
 
 jaal_status ApiSetEventSink(jaal_event_sink sink, void* user_data) {
+  ScopedApiCall call;
   return Engine::Get().SetEventSink(sink, user_data);
 }
 jaal_status ApiQuit() {
+  ScopedApiCall call;
   return Engine::Get().Quit();
 }
 jaal_status ApiWindowCreate(jaal_handle* out_window) {
+  ScopedApiCall call;
   return Engine::Get().WindowCreate(out_window);
 }
 jaal_status ApiWindowClose(jaal_handle window) {
+  ScopedApiCall call;
   return Engine::Get().WindowClose(window);
 }
 jaal_status ApiWindowNativeHandle(jaal_handle window, void** out_handle) {
+  ScopedApiCall call;
   return Engine::Get().WindowNativeHandle(window, out_handle);
 }
 jaal_status ApiWindowSetPageRect(jaal_handle window, jaal_rect rect) {
+  ScopedApiCall call;
   return Engine::Get().WindowSetPageRect(window, rect);
 }
 jaal_status ApiTabOpen(jaal_handle window,
                        const char* url,
                        uint8_t foreground,
                        jaal_handle* out_tab) {
+  ScopedApiCall call;
   return Engine::Get().TabOpen(window, url, foreground, out_tab);
 }
 jaal_status ApiTabClose(jaal_handle tab) {
+  ScopedApiCall call;
   return Engine::Get().TabClose(tab);
 }
 jaal_status ApiTabActivate(jaal_handle tab) {
+  ScopedApiCall call;
   return Engine::Get().TabActivate(tab);
 }
 jaal_status ApiTabLoad(jaal_handle tab, const char* url) {
+  ScopedApiCall call;
   return Engine::Get().TabLoad(tab, url);
+}
+jaal_status ApiSetShortcutFilter(jaal_shortcut_filter filter,
+                                 void* user_data) {
+  ScopedApiCall call;
+  return Engine::Get().SetShortcutFilter(filter, user_data);
+}
+jaal_status ApiWindowSetPagePlacement(jaal_handle window,
+                                      jaal_placement placement) {
+  ScopedApiCall call;
+  return Engine::Get().WindowSetPagePlacement(window, placement);
+}
+jaal_status ApiWindowAttachView(jaal_handle window,
+                                void* native_view,
+                                const jaal_view_options* options) {
+  ScopedApiCall call;
+  return Engine::Get().WindowAttachView(window, native_view, options);
+}
+jaal_status ApiWindowUpdateView(jaal_handle window,
+                                void* native_view,
+                                const jaal_view_options* options) {
+  ScopedApiCall call;
+  return Engine::Get().WindowUpdateView(window, native_view, options);
+}
+jaal_status ApiWindowDetachView(jaal_handle window, void* native_view) {
+  ScopedApiCall call;
+  return Engine::Get().WindowDetachView(window, native_view);
+}
+jaal_status ApiWindowFocusPage(jaal_handle window) {
+  ScopedApiCall call;
+  return Engine::Get().WindowFocusPage(window);
+}
+jaal_status ApiWindowSetState(jaal_handle window, jaal_window_state state) {
+  ScopedApiCall call;
+  return Engine::Get().WindowSetState(window, state);
+}
+jaal_status ApiWindowCreateWith(const jaal_window_options* options,
+                                jaal_handle* out_window) {
+  ScopedApiCall call;
+  return Engine::Get().WindowCreateWith(options, out_window);
+}
+jaal_status ApiWindowSetStyle(jaal_handle window,
+                              const jaal_window_style* style) {
+  ScopedApiCall call;
+  return Engine::Get().WindowSetStyle(window, style);
+}
+jaal_status ApiWindowBeginDrag(jaal_handle window) {
+  ScopedApiCall call;
+  return Engine::Get().WindowBeginDrag(window);
+}
+jaal_status ApiTabNavigate(jaal_handle tab, jaal_nav_action action) {
+  ScopedApiCall call;
+  return Engine::Get().TabNavigate(tab, action);
 }
 
 constexpr jaal_engine_api kApi = {
@@ -423,12 +702,25 @@ constexpr jaal_engine_api kApi = {
     .tab_close = &ApiTabClose,
     .tab_activate = &ApiTabActivate,
     .tab_load = &ApiTabLoad,
+    .set_shortcut_filter = &ApiSetShortcutFilter,
+    .window_set_page_placement = &ApiWindowSetPagePlacement,
+    .window_attach_view = &ApiWindowAttachView,
+    .window_update_view = &ApiWindowUpdateView,
+    .window_detach_view = &ApiWindowDetachView,
+    .window_focus_page = &ApiWindowFocusPage,
+    .window_set_state = &ApiWindowSetState,
+    .window_create_with = &ApiWindowCreateWith,
+    .window_set_style = &ApiWindowSetStyle,
+    .window_begin_drag = &ApiWindowBeginDrag,
+    .tab_navigate = &ApiTabNavigate,
 };
 
-// The size of the first table version. A UI library built against a later
-// minor version passes a bigger size and checks struct_size before using
-// newer calls; one built against an older version must pass at least this.
-constexpr uint32_t kFirstApiSize = sizeof(jaal_engine_api);
+// The size of the first table version (1.0), which ends before the first
+// call 1.1 added. A UI library built against a later minor version passes a
+// bigger size and checks struct_size before using newer calls; one built
+// against an older version must pass at least this.
+constexpr uint32_t kFirstApiSize =
+    offsetof(jaal_engine_api, set_shortcut_filter);
 
 }  // namespace
 
