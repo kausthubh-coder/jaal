@@ -1,27 +1,52 @@
-//! Glue between GPUI and CEF on macOS, shared by the GPUI bake-off variants:
-//! the NSApp protocol patch, the external message pump, the CEF client, CEF
-//! browsers hosted as native child views of a GPUI window (gpui-a), and the
-//! text field both variants draw (GPUI ships none).
+//! Glue between GPUI and CEF, shared by the GPUI bake-off variants: the
+//! external message pump, the CEF client, CEF browsers hosted as native
+//! child views of a GPUI window (gpui-a), and the text field both variants
+//! draw (GPUI ships none). On macOS also the NSApp protocol patch and a GPUI
+//! deadlock fix.
 //!
-//! Startup order matters, see `start`.
+//! macOS and Windows. Startup order matters, see `start`.
 
-#![cfg(target_os = "macos")]
+#![cfg(any(target_os = "macos", target_os = "windows"))]
 
+#[cfg(target_os = "macos")]
+mod child_mac;
+#[cfg(target_os = "windows")]
+mod child_win;
+#[cfg(target_os = "macos")]
 pub mod gpui_patch;
+#[cfg(target_os = "macos")]
 pub mod nsapp;
+#[cfg(target_os = "macos")]
 pub mod posted_events;
 pub mod pump;
 pub mod text_input;
 
+#[cfg(target_os = "macos")]
+pub use child_mac::*;
+#[cfg(target_os = "windows")]
+pub use child_win::*;
+
 use cef::*;
-use objc2::msg_send;
-use objc2::runtime::{AnyObject, Bool};
-use objc2_foundation::{NSPoint, NSRect, NSSize};
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::ffi::c_void;
 use std::path::Path;
 use std::rc::Rc;
 
 pub use cef;
+#[cfg(target_os = "windows")]
+pub use pump::run_after_gpui;
+
+/// The native view of a GPUI window: its NSView on macOS, its HWND on
+/// Windows. CEF child browsers and the gpui-a overlay take it.
+pub fn native_view(window: &gpui::Window) -> *mut c_void {
+    match HasWindowHandle::window_handle(window).map(|h| h.as_raw()) {
+        #[cfg(target_os = "macos")]
+        Ok(RawWindowHandle::AppKit(handle)) => handle.ns_view.as_ptr(),
+        #[cfg(target_os = "windows")]
+        Ok(RawWindowHandle::Win32(handle)) => handle.hwnd.get() as *mut c_void,
+        other => panic!("unexpected GPUI window handle: {other:?}"),
+    }
+}
 
 /// What a browser reports back to the UI. Every event is delivered on the
 /// main thread, from inside `cef::do_message_loop_work`, so the handler must
@@ -49,7 +74,7 @@ pub enum BrowserEvent {
         browser_id: i32,
         message: String,
     },
-    /// A Cmd+letter key down that reached the page. The handler returns true
+    /// A Cmd+letter (Ctrl+letter on Windows) key down that reached the page. The handler returns true
     /// to take it as an app shortcut, so the page never sees it.
     CommandKey {
         browser_id: i32,
@@ -64,29 +89,52 @@ pub enum BrowserEvent {
     },
 }
 
+// The cef crate types these callback arguments per platform.
+#[cfg(target_os = "macos")]
+type NativeCursor = *mut u8;
+#[cfg(target_os = "windows")]
+type NativeCursor = *mut sys::HICON__;
+#[cfg(target_os = "macos")]
+type NativeKeyEvent<'a> = *mut u8;
+#[cfg(target_os = "windows")]
+type NativeKeyEvent<'a> = Option<&'a mut sys::tagMSG>;
+
 /// Returns true when it handled the event (only matters for `CommandKey` and
 /// `Console`).
 pub type EventHandler = Rc<dyn Fn(BrowserEvent) -> bool>;
 
-/// Loads the framework, patches NSApp and GPUI's window classes, and
-/// initializes CEF with the external pump. Call first thing in `main`, on the main thread, before
-/// `gpui::Application::new()`. Keep the returned loader alive until exit.
+/// Keeps what `start` loaded alive. Drop it only at exit.
+pub struct Started {
+    #[cfg(target_os = "macos")]
+    _loader: library_loader::LibraryLoader,
+}
+
+/// Loads CEF, applies the platform patches, and initializes CEF with the
+/// external pump. Call first thing in `main`, on the main thread, before
+/// `gpui::Application::new()`. Keep the result alive until exit.
 ///
-/// The order is required: the protocols the NSApp patch adds live in the CEF
-/// framework, and NSApp must be a `GPUIApplication` before either CEF or
-/// GPUI creates it.
-pub fn start(profile_dir: &Path) -> library_loader::LibraryLoader {
-    let exe = std::env::current_exe().expect("current exe");
-    let loader = library_loader::LibraryLoader::new(&exe, false);
-    assert!(loader.load(), "could not load the CEF framework");
+/// On macOS the order is required: the protocols the NSApp patch adds live
+/// in the CEF framework, and NSApp must be a `GPUIApplication` before either
+/// CEF or GPUI creates it.
+pub fn start(profile_dir: &Path) -> Started {
+    #[cfg(target_os = "macos")]
+    let loader = {
+        let exe = std::env::current_exe().expect("current exe");
+        let loader = library_loader::LibraryLoader::new(&exe, false);
+        assert!(loader.load(), "could not load the CEF framework");
+        loader
+    };
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
 
-    nsapp::install_cef_app_protocol();
-    gpui_patch::fix_key_status_deadlock();
+    #[cfg(target_os = "macos")]
+    {
+        nsapp::install_cef_app_protocol();
+        gpui_patch::fix_key_status_deadlock();
+    }
 
     let args = args::Args::new();
-    // The main executable only ever runs as the browser process: the bundle's
-    // helper apps run the others. execute_process returns -1 for it.
+    // The main executable only ever runs as the browser process: the helpers
+    // run the others. execute_process returns -1 for it.
     let code = execute_process(Some(args.as_main_args()), None, std::ptr::null_mut());
     assert_eq!(code, -1, "main executable started as a CEF subprocess");
 
@@ -100,6 +148,14 @@ pub fn start(profile_dir: &Path) -> library_loader::LibraryLoader {
         cache_path: profile,
         log_file,
         log_severity: LogSeverity::WARNING,
+        // On macOS the bundle's helper apps run the subprocesses. On Windows
+        // there is no bundle: `<exe>-helper.exe` sits next to the exe, so
+        // renderers don't load GPUI. The sandbox needs CEF's bootstrap.exe
+        // layout, which the bake-off doesn't use.
+        #[cfg(target_os = "windows")]
+        browser_subprocess_path: CefString::from(helper_path().to_str().expect("utf-8 exe path")),
+        #[cfg(target_os = "windows")]
+        no_sandbox: 1,
         ..Default::default()
     };
     let mut app = PumpApp::new();
@@ -116,7 +172,20 @@ pub fn start(profile_dir: &Path) -> library_loader::LibraryLoader {
         profile_dir.display()
     );
     pump::start();
-    loader
+    Started {
+        #[cfg(target_os = "macos")]
+        _loader: loader,
+    }
+}
+
+/// `gpui-a.exe` runs `gpui-a-helper.exe` from the same folder.
+#[cfg(target_os = "windows")]
+fn helper_path() -> std::path::PathBuf {
+    let exe = std::env::current_exe().expect("current exe");
+    let stem = exe.file_stem().expect("exe name").to_string_lossy();
+    let helper = exe.with_file_name(format!("{stem}-helper.exe"));
+    assert!(helper.exists(), "missing {}", helper.display());
+    helper
 }
 
 /// Stops the pump and shuts CEF down. Close every browser and wait for their
@@ -132,12 +201,21 @@ wrap_app! {
 
     impl App {
         fn on_before_command_line_processing(&self, _process_type: Option<&CefString>, command_line: Option<&mut CommandLine>) {
-            if let Some(command_line) = command_line {
-                // Without it Chromium asks the login keychain for its cookie
-                // key, which opens a password dialog nobody can answer on an
-                // unattended Mac. The bake-off keeps no secrets.
-                command_line.append_switch(Some(&CefString::from("use-mock-keychain")));
-            }
+            let Some(command_line) = command_line else { return };
+            // Without it Chromium asks the login keychain for its cookie
+            // key, which opens a password dialog nobody can answer on an
+            // unattended Mac. The bake-off keeps no secrets.
+            #[cfg(target_os = "macos")]
+            command_line.append_switch(Some(&CefString::from("use-mock-keychain")));
+            // Windows needs no keychain switch: Chromium keeps its cookie key
+            // with DPAPI, which never prompts. What can prompt is Windows
+            // Firewall, the first time the Media Router's cast discovery
+            // listens for mDNS. The bake-off casts nothing.
+            #[cfg(target_os = "windows")]
+            command_line.append_switch_with_value(
+                Some(&CefString::from("disable-features")),
+                Some(&CefString::from("MediaRouter")),
+            );
         }
 
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {
@@ -219,7 +297,7 @@ wrap_display_handler! {
             (self.handler)(BrowserEvent::TitleChange { browser_id: browser_id(browser), title });
         }
 
-        fn on_cursor_change(&self, browser: Option<&mut Browser>, _cursor: *mut u8, type_: CursorType, _custom_cursor_info: Option<&CursorInfo>) -> ::std::os::raw::c_int {
+        fn on_cursor_change(&self, browser: Option<&mut Browser>, _cursor: NativeCursor, type_: CursorType, _custom_cursor_info: Option<&CursorInfo>) -> ::std::os::raw::c_int {
             (self.handler)(BrowserEvent::CursorChange { browser_id: browser_id(browser), cursor: type_ }) as i32
         }
 
@@ -245,14 +323,13 @@ wrap_life_span_handler! {
                 return 0;
             }
             // A windowed browser: we own the window. Returning 0 lets CEF
-            // send performClose: to it, which closes the whole GPUI window
-            // for one tab. Returning 1 means we destroy the browser's view
-            // ourselves: CEF calls on_before_close once that NSView is gone.
-            let view = host.window_handle();
+            // close the top-level window (performClose: on macOS, WM_CLOSE on
+            // Windows), which is the whole GPUI window, for one tab.
+            // Returning 1 means we destroy the browser's view ourselves: CEF
+            // calls on_before_close once it is gone.
+            let view = native_handle(host.window_handle());
             if !view.is_null() {
-                unsafe {
-                    let _: () = msg_send![view.cast::<AnyObject>(), removeFromSuperview];
-                }
+                unsafe { destroy_browser_view(view) };
             }
             1
         }
@@ -282,12 +359,12 @@ wrap_keyboard_handler! {
     }
 
     impl KeyboardHandler {
-        fn on_pre_key_event(&self, browser: Option<&mut Browser>, event: Option<&KeyEvent>, _os_event: *mut u8, _is_keyboard_shortcut: Option<&mut ::std::os::raw::c_int>) -> ::std::os::raw::c_int {
-            // While the page has keyboard focus its NSView swallows key
-            // equivalents, so GPUI never sees Cmd+T. Hand them back here.
+        fn on_pre_key_event(&self, browser: Option<&mut Browser>, event: Option<&KeyEvent>, _os_event: NativeKeyEvent<'_>, _is_keyboard_shortcut: Option<&mut ::std::os::raw::c_int>) -> ::std::os::raw::c_int {
+            // While the page has keyboard focus its native view takes every
+            // key, so GPUI never sees Cmd+T (Ctrl+T on Windows). Hand them
+            // back here.
             let Some(event) = event else { return 0 };
-            let command = event.modifiers & sys::cef_event_flags_t::EVENTFLAG_COMMAND_DOWN.0 != 0;
-            if event.type_ != KeyEventType::RAWKEYDOWN || !command {
+            if event.type_ != KeyEventType::RAWKEYDOWN || !is_shortcut_modifier(event.modifiers) {
                 return 0;
             }
             let Some(key) = char::from_u32(event.windows_key_code as u32).filter(char::is_ascii_alphanumeric) else {
@@ -299,133 +376,15 @@ wrap_keyboard_handler! {
     }
 }
 
-/// A windowed CEF browser whose NSView is a child of a GPUI window's content
-/// view, placed above GPUI's own view.
-#[derive(Clone)]
-pub struct ChildBrowser {
-    pub browser: Browser,
-    view: *mut AnyObject,
-}
-
-impl ChildBrowser {
-    /// `gpui_view` is the NSView from the GPUI window's raw window handle.
-    /// The browser starts hidden; place it with `set_frame` and show it.
-    pub fn create(gpui_view: *mut c_void, url: &str, client: &mut Client) -> Option<ChildBrowser> {
-        let content_view = unsafe { content_view_of(gpui_view.cast()) };
-        let window_info = WindowInfo {
-            runtime_style: RuntimeStyle::ALLOY,
-            ..Default::default()
-        }
-        .set_as_child(
-            content_view.cast(),
-            &Rect {
-                x: 0,
-                y: 0,
-                width: 1,
-                height: 1,
-            },
-        );
-        let browser = browser_host_create_browser_sync(
-            Some(&window_info),
-            Some(client),
-            Some(&CefString::from(url)),
-            Some(&BrowserSettings::default()),
-            None,
-            None,
-        )?;
-        let view: *mut AnyObject = browser.host()?.window_handle().cast();
-        if view.is_null() {
-            return None;
-        }
-        unsafe {
-            // Width and height follow the window, margins stay fixed. During a
-            // live resize AppKit then resizes the page in the same pass as the
-            // window, before GPUI's next frame catches up with set_frame.
-            let _: () = msg_send![view, setAutoresizingMask: NS_VIEW_WIDTH_SIZABLE | NS_VIEW_HEIGHT_SIZABLE];
-            let _: () = msg_send![view, setHidden: Bool::YES];
-        }
-        Some(ChildBrowser { browser, view })
+/// Cmd on macOS. Ctrl on Windows, but not with Alt: AltGr arrives as
+/// Ctrl+Alt and types characters on many keyboard layouts.
+fn is_shortcut_modifier(modifiers: u32) -> bool {
+    use sys::cef_event_flags_t as flags;
+    // The flags are u32 on macOS and i32 on Windows.
+    let has = |flag: flags| i64::from(modifiers) & i64::from(flag.0) != 0;
+    if cfg!(target_os = "macos") {
+        has(flags::EVENTFLAG_COMMAND_DOWN)
+    } else {
+        has(flags::EVENTFLAG_CONTROL_DOWN) && !has(flags::EVENTFLAG_ALT_DOWN)
     }
-
-    pub fn id(&self) -> i32 {
-        self.browser.identifier()
-    }
-
-    /// Places the page at `x, y, width, height` in GPUI's window coordinates
-    /// (points, origin top left).
-    pub fn set_frame(&self, x: f64, y: f64, width: f64, height: f64) {
-        unsafe {
-            let superview: *mut AnyObject = msg_send![self.view, superview];
-            if superview.is_null() {
-                return;
-            }
-            // The content view isn't flipped: AppKit's origin is bottom left.
-            let parent: NSRect = msg_send![superview, bounds];
-            let frame = NSRect::new(
-                NSPoint::new(x, parent.size.height - y - height),
-                NSSize::new(width, height),
-            );
-            let current: NSRect = msg_send![self.view, frame];
-            if current != frame {
-                let _: () = msg_send![self.view, setFrame: frame];
-            }
-        }
-    }
-
-    pub fn set_visible(&self, visible: bool) {
-        unsafe {
-            let _: () = msg_send![self.view, setHidden: Bool::new(!visible)];
-        }
-        if visible && let Some(host) = self.browser.host() {
-            host.set_focus(1);
-        }
-    }
-
-    pub fn load_url(&self, url: &str) {
-        if let Some(frame) = self.browser.main_frame() {
-            frame.load_url(Some(&CefString::from(url)));
-        }
-    }
-
-    pub fn run_js(&self, code: &str) {
-        if let Some(frame) = self.browser.main_frame() {
-            frame.execute_java_script(Some(&CefString::from(code)), None, 0);
-        }
-    }
-
-    /// Starts closing; `BeforeClose` follows once CEF is done.
-    pub fn close(&self) {
-        unsafe {
-            let _: () = msg_send![self.view, setHidden: Bool::YES];
-        }
-        if let Some(host) = self.browser.host() {
-            host.close_browser(1);
-        }
-    }
-}
-
-const NS_VIEW_WIDTH_SIZABLE: usize = 2;
-const NS_VIEW_HEIGHT_SIZABLE: usize = 16;
-
-unsafe fn content_view_of(view: *mut AnyObject) -> *mut AnyObject {
-    unsafe {
-        let window = ns_window_of(view.cast());
-        msg_send![window, contentView]
-    }
-}
-
-/// The NSWindow of a GPUI window's NSView.
-///
-/// # Safety
-/// `gpui_view` must be a live NSView.
-pub unsafe fn ns_window_of(gpui_view: *mut c_void) -> *mut AnyObject {
-    unsafe { msg_send![gpui_view.cast::<AnyObject>(), window] }
-}
-
-/// The window's CGWindowID, what `screencapture -l` takes.
-///
-/// # Safety
-/// `gpui_view` must be a live NSView in a window.
-pub unsafe fn window_number(gpui_view: *mut c_void) -> isize {
-    unsafe { msg_send![ns_window_of(gpui_view), windowNumber] }
 }

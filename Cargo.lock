@@ -2079,7 +2079,7 @@ dependencies = [
  "jaal-gpui-cef",
  "objc2",
  "objc2-foundation",
- "raw-window-handle",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2762,7 +2762,9 @@ dependencies = [
  "gpui",
  "objc2",
  "objc2-foundation",
+ "raw-window-handle",
  "unicode-segmentation",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
