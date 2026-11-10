@@ -1,0 +1,892 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jaal: design</title>
+<style>
+/* The sheet around the window uses the host's theme when there is one. */
+body { margin: 0; font: 13px/1.45 var(--font-sans, system-ui, -apple-system, "Segoe UI", sans-serif); color: var(--foreground, #1c1c1c); }
+.wrap { max-width: 1000px; margin: 0 auto; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 12px; margin: 2px 0 8px; }
+.seg { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px; border: 1px solid var(--border, #d9d9d9); border-radius: 8px; }
+.seg button { font: inherit; font-size: 12.5px; padding: 3px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground, #6b6b6b); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--secondary, #ececec); color: var(--foreground, #1c1c1c); font-weight: 600; }
+/* Room for three lines, so the window does not jump when the caption changes. */
+.cap { margin: 4px 0 10px; min-height: 4.35em; color: var(--muted-foreground, #6b6b6b); }
+.fit { position: relative; width: 100%; margin: 0 0 26px; }
+
+/* ---------- Tokens ----------
+   A space sets two hues: --h tints the chrome, --ha colors the accent.
+   Every other color is derived from them, once for light and once for dark. */
+.win {
+  --h: 75; --ha: 42;
+  --chrome-top: oklch(0.932 0.014 var(--h)); --chrome-bottom: oklch(0.9 0.02 var(--h));
+  --ink: oklch(0.27 0.012 var(--h)); --ink-2: oklch(0.52 0.018 var(--h)); --ink-3: oklch(0.69 0.022 var(--h));
+  --fill: oklch(0.35 0.04 var(--h) / .085); --fill-hover: oklch(0.35 0.04 var(--h) / .05); --line: oklch(0.35 0.04 var(--h) / .14); --line-strong: oklch(0.35 0.04 var(--h) / .3);
+  --accent: oklch(0.58 0.15 var(--ha)); --accent-ink: oklch(0.47 0.14 var(--ha)); --accent-fill: oklch(0.58 0.15 var(--ha) / .14); --on-accent: #fff;
+  --danger: oklch(0.55 0.19 27);
+  --raised: #fff; --raised-shadow: 0 0 0 .5px oklch(0.3 0.04 var(--h) / .12), 0 1px 2.5px oklch(0.3 0.04 var(--h) / .16);
+  --card-shadow: 0 0 0 .5px oklch(0.3 0.04 var(--h) / .16), 0 2px 10px oklch(0.3 0.04 var(--h) / .12);
+  --glass: oklch(0.975 0.006 var(--h) / .74); --glass-shadow: 0 0 0 .5px oklch(0.25 0.03 var(--h) / .24), 0 2px 6px oklch(0.25 0.03 var(--h) / .08), 0 28px 64px oklch(0.25 0.03 var(--h) / .32);
+  --pop-shadow: 0 0 0 .5px oklch(0.25 0.03 var(--h) / .24), 0 2px 6px oklch(0.25 0.03 var(--h) / .08), 0 14px 34px oklch(0.25 0.03 var(--h) / .24);
+  --win-shadow: 0 0 0 1px oklch(0.3 0.03 var(--h) / .2), 0 10px 26px oklch(0.25 0.03 var(--h) / .18);
+  --mark: oklch(0.91 0.13 98);
+  --pg-bg: #fff; --pg-fg: #1d1d1f; --pg-mut: #6e6e73; --pg-sunk: #f5f5f3; --pg-line: #ececea; --pg-shape: #e4e4e0;
+}
+.win[data-theme="dark"] {
+  --chrome-top: oklch(0.255 0.016 var(--h)); --chrome-bottom: oklch(0.215 0.018 var(--h));
+  --ink: oklch(0.94 0.006 var(--h)); --ink-2: oklch(0.74 0.012 var(--h)); --ink-3: oklch(0.55 0.014 var(--h));
+  --fill: oklch(1 0 0 / .075); --fill-hover: oklch(1 0 0 / .045); --line: oklch(1 0 0 / .1); --line-strong: oklch(1 0 0 / .24);
+  --accent: oklch(0.76 0.13 var(--ha)); --accent-ink: oklch(0.83 0.11 var(--ha)); --accent-fill: oklch(0.76 0.13 var(--ha) / .2); --on-accent: oklch(0.2 0.04 var(--ha));
+  --danger: oklch(0.74 0.15 27);
+  --raised: oklch(1 0 0 / .15); --raised-shadow: 0 0 0 .5px oklch(1 0 0 / .07), 0 1px 2px oklch(0 0 0 / .3);
+  --card-shadow: 0 0 0 .5px oklch(1 0 0 / .1), 0 2px 10px oklch(0 0 0 / .35);
+  --glass: oklch(0.27 0.014 var(--h) / .72); --glass-shadow: 0 0 0 .5px oklch(1 0 0 / .18), 0 28px 64px oklch(0 0 0 / .55);
+  --pop-shadow: 0 0 0 .5px oklch(1 0 0 / .18), 0 14px 34px oklch(0 0 0 / .5);
+  --win-shadow: 0 0 0 1px oklch(0 0 0 / .6), 0 10px 26px oklch(0 0 0 / .3);
+  --mark: oklch(0.52 0.1 98);
+  --pg-bg: #1b1b1d; --pg-fg: #f2f2f4; --pg-mut: #a0a0a6; --pg-sunk: #262628; --pg-line: #2e2e31; --pg-shape: #3b3b3f;
+}
+
+/* ---------- Window ---------- */
+.win { position: absolute; left: 0; top: 0; width: 1000px; height: 640px; transform-origin: 0 0; border-radius: 12px; overflow: hidden; font: 13px/1.3 system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; cursor: default; user-select: none; background: linear-gradient(180deg, var(--chrome-top), var(--chrome-bottom)); color: var(--ink); box-shadow: var(--win-shadow); }
+.win[data-os="win"] { border-radius: 8px; font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+.win button, .win input { font: inherit; color: inherit; }
+.win :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.fv { width: 16px; height: 16px; flex: none; border-radius: 4px; display: grid; place-items: center; font: 700 9px/1 system-ui, sans-serif; font-variant-emoji: text; letter-spacing: -0.02em; }
+.win[data-theme="dark"] .fv { box-shadow: 0 0 0 1px oklch(1 0 0 / .14); }
+.lights { display: flex; gap: 8px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; }
+.lights i:nth-child(1) { background: #ff5f57; } .lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+.grow { flex: 1; }
+.t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub { display: block; font-size: 11.5px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; }
+kbd { font: inherit; }
+
+/* Sidebar */
+.side { position: absolute; z-index: 2; inset: 0 auto 0 0; width: 236px; padding: 0 10px; box-sizing: border-box; display: flex; flex-direction: column; }
+.top { display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 4px; color: var(--ink-2); }
+.top .dim { display: flex; color: var(--ink-3); }
+/* On Windows the window buttons live in the sidebar's top row, as in Zen. No strip above the page. */
+.capbtns { display: flex; margin-right: -8px; }
+.capbtns span { width: 27px; height: 26px; display: grid; place-items: center; border-radius: 6px; color: var(--ink); }
+.capbtns span:hover { background: var(--fill); }
+.capbtns svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; }
+.url { position: relative; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 9px; border-radius: 9px; background: var(--fill); font-size: 12.5px; color: var(--ink-2); }
+.url b { font-weight: 500; color: var(--ink); }
+.url .ph { color: var(--ink-3); }
+.url.focus { background: var(--raised); box-shadow: 0 0 0 2px var(--accent); color: var(--ink); }
+.url .sel { background: var(--accent-fill); border-radius: 2px; }
+.url.loading { overflow: hidden; }
+.url .load { position: absolute; left: 0; bottom: 0; width: 55%; height: 2px; background: var(--accent); }
+.favs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 10px 0 14px; }
+.tile { height: 38px; border-radius: 10px; background: var(--fill); display: grid; place-items: center; transition: background .1s; }
+.tile:hover { background: var(--line); }
+.label { display: flex; align-items: center; gap: 7px; height: 24px; padding: 0 9px; font-size: 11.5px; font-weight: 600; color: var(--ink-2); }
+.label .ic { width: 14px; height: 14px; color: var(--accent); }
+.row { position: relative; display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 9px; border-radius: 8px; transition: background .08s; }
+.row:hover, .row.hover { background: var(--fill-hover); }
+.row .ic { color: var(--ink-3); }
+.row .close { display: none; }
+.row:hover .close, .row.hover .close, .row.on .close { display: block; }
+.row.on { background: var(--raised); box-shadow: var(--raised-shadow); }
+.row.new { color: var(--ink-2); }
+.row small { font-size: 11px; color: var(--ink-3); }
+.row.asleep { color: var(--ink-2); }
+.row.asleep .fv { opacity: .45; }
+.row.child { margin-left: 16px; }
+.row.drag { background: var(--raised); box-shadow: 0 8px 20px oklch(0.2 0.03 var(--h) / .25), var(--raised-shadow); transform: translateX(10px) rotate(-1.5deg); }
+.drop { height: 2px; margin: 2px 6px; border-radius: 1px; background: var(--accent); }
+.hint { height: 30px; display: grid; place-items: center; border-radius: 8px; border: 1px dashed var(--line-strong); font-size: 12px; color: var(--ink-3); box-sizing: border-box; }
+/* A split is one raised group with a line for each pane, so both titles stay readable. */
+.row.split { height: auto; flex-direction: column; align-items: stretch; gap: 2px; padding: 3px; }
+.row.split .half { display: flex; align-items: center; gap: 9px; height: 26px; padding: 0 6px; border-radius: 6px; color: var(--ink-2); }
+.row.split .half.focus { color: var(--ink); background: var(--accent-fill); }
+.divider { display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 9px; font-size: 11px; color: var(--ink-3); }
+.divider hr { flex: 1; border: 0; border-top: 1px solid var(--line); }
+.foot { display: flex; align-items: center; height: 42px; padding: 0 6px; color: var(--ink-2); }
+.anchor { position: relative; display: flex; }
+.spaces { display: flex; align-items: center; gap: 2px; }
+.sp { width: 28px; height: 24px; display: grid; place-items: center; border-radius: 7px; color: var(--ink-3); cursor: pointer; transition: background .1s, color .1s; }
+.sp:hover { background: var(--fill-hover); color: var(--ink-2); }
+.sp.on { background: var(--accent-fill); color: var(--accent-ink); }
+.spin { width: 14px; height: 14px; margin: 1px; flex: none; box-sizing: border-box; border-radius: 50%; border: 1.5px solid var(--line-strong); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+
+/* Pages */
+.panes { position: absolute; inset: 8px 8px 8px 236px; display: flex; gap: 8px; }
+.win[data-view="hidden"] .panes { left: 8px; }
+.win[data-view="split"] .panes::after { content: ""; position: absolute; left: calc(50% - 2px); top: calc(50% - 18px); width: 4px; height: 36px; border-radius: 2px; background: var(--ink-3); opacity: .7; }
+.page { position: relative; flex: 1; min-width: 0; border-radius: 10px; box-shadow: var(--card-shadow); overflow: hidden; container-type: inline-size; background: var(--pg-bg); color: var(--pg-fg); font: 14.5px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.win[data-view="split"] .page.focus { box-shadow: 0 0 0 1.5px var(--accent), var(--card-shadow); }
+.empty { flex: 1; display: grid; place-content: center; justify-items: center; gap: 4px; border-radius: 10px; border: 1.5px dashed var(--line-strong); color: var(--ink-2); }
+.empty b { margin-top: 8px; font-size: 15px; font-weight: 600; color: var(--ink); }
+.badge { width: 30px; height: 30px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--accent-fill); color: var(--accent-ink); }
+
+/* The site inside the page. It follows the theme, as most sites do. */
+.pg { max-width: 580px; margin: 0 auto; padding: 0 40px; }
+.pg-nav { display: flex; align-items: center; gap: 22px; height: 52px; font-size: 12.5px; color: var(--pg-mut); border-bottom: 1px solid var(--pg-line); margin-bottom: 38px; white-space: nowrap; }
+.pg-nav b { color: var(--pg-fg); font-size: 14px; letter-spacing: -0.01em; }
+.pg-kick { font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--pg-mut); }
+.pg h1 { font: 600 36px/1.08 ui-serif, "New York", Georgia, serif; letter-spacing: -0.02em; margin: 10px 0 12px; text-wrap: balance; }
+.pg-lede { font-size: 17px; line-height: 1.45; color: var(--pg-mut); margin: 0 0 26px; }
+.pg-fig { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 0 0 26px; }
+.pg-fig div { background: var(--pg-sunk); border-radius: 10px; padding: 14px 14px 12px; font-size: 12px; color: var(--pg-mut); }
+.pg-fig svg { display: block; width: 100%; height: 74px; margin-bottom: 10px; }
+.f-win { fill: var(--pg-bg); stroke: var(--pg-shape); } .f-page { fill: var(--pg-shape); } .f-bar { fill: var(--pg-fg); } .f-dash { fill: none; stroke: var(--pg-fg); stroke-dasharray: 3 3; }
+.pg p { margin: 0 0 14px; }
+.pg pre { margin: 0 0 14px; padding: 12px 14px; border-radius: 8px; background: var(--pg-sunk); font: 12px/1.55 ui-monospace, "SF Mono", Menlo, Consolas, monospace; overflow: hidden; }
+.pg mark { background: var(--mark); color: inherit; border-radius: 2px; }
+.pg mark.cur { background: var(--accent); color: var(--on-accent); }
+@container (max-width: 480px) {
+  .pg { padding: 0 24px; }
+  .pg-nav { gap: 14px; margin-bottom: 26px; }
+  .pg h1 { font-size: 28px; }
+  .pg-lede { font-size: 15px; margin-bottom: 20px; }
+  .pg-fig { grid-template-columns: 1fr; gap: 8px; }
+  .pg-fig div { display: flex; align-items: center; gap: 12px; padding: 10px 12px; }
+  .pg-fig svg { width: 92px; height: 46px; margin: 0; flex: none; }
+}
+
+/* ---------- Controls ---------- */
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border: 0; border-radius: 7px; background: var(--fill); font-size: 12.5px; font-weight: 550; white-space: nowrap; cursor: pointer; transition: background .12s, filter .12s, transform .08s; }
+.btn:hover { background: var(--line); }
+.btn:active { transform: scale(.97); }
+.btn.primary { background: var(--accent); color: var(--on-accent); }
+.btn.primary:hover { background: var(--accent); filter: brightness(1.08); }
+.btn.ghost { background: transparent; color: var(--ink-2); }
+.btn.ghost:hover { background: var(--fill); }
+.btn.danger { color: var(--danger); }
+.btn:disabled { opacity: .45; pointer-events: none; }
+.ibtn { width: 26px; height: 26px; flex: none; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--ink-2); cursor: pointer; transition: background .12s, transform .08s; }
+.ibtn:hover { background: var(--fill); }
+.ibtn:active { transform: scale(.94); }
+.ibtn.on { background: var(--accent-fill); color: var(--accent-ink); }
+.field { width: 100%; height: 30px; box-sizing: border-box; padding: 0 9px; border: 0; border-radius: 8px; background: var(--fill); font-size: 13px; outline: 0; transition: box-shadow .12s, background .12s; }
+.field::placeholder { color: var(--ink-3); }
+.field:focus, .field.focus { background: var(--raised); box-shadow: 0 0 0 2px var(--accent); outline: 0; }
+.toggle { position: relative; width: 30px; height: 18px; flex: none; padding: 0; border: 0; border-radius: 9px; background: var(--line-strong); cursor: pointer; transition: background .15s; }
+.toggle::after { content: ""; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px oklch(0 0 0 / .25); transition: transform .16s cubic-bezier(.3, .7, .3, 1); }
+.toggle[aria-checked="true"] { background: var(--accent); }
+.toggle[aria-checked="true"]::after { transform: translateX(12px); }
+.check, .radio { width: 16px; height: 16px; flex: none; box-sizing: border-box; display: grid; place-items: center; border-radius: 4.5px; box-shadow: inset 0 0 0 1.5px var(--line-strong); }
+.radio { border-radius: 50%; }
+.check.on, .radio.on { background: var(--accent); box-shadow: none; color: var(--on-accent); }
+.check .ic { width: 12px; height: 12px; stroke-width: 2; }
+.radio.on::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--on-accent); }
+.choice { display: inline-flex; align-items: center; gap: 7px; }
+.segc { display: inline-flex; padding: 2px; border-radius: 8px; background: var(--fill); }
+.segc button { height: 24px; padding: 0 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-2); font-size: 12.5px; cursor: pointer; transition: color .1s; }
+.segc button:hover { color: var(--ink); }
+.segc button[aria-pressed="true"] { background: var(--raised); box-shadow: var(--raised-shadow); color: var(--ink); font-weight: 550; }
+.select { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 5px 0 10px; border-radius: 7px; background: var(--fill); font-size: 12.5px; white-space: nowrap; cursor: pointer; transition: background .12s; }
+.select:hover { background: var(--line); }
+.select .ic { color: var(--ink-2); }
+.win input[type="range"] { width: 150px; accent-color: var(--accent); }
+.key { display: inline-grid; place-items: center; min-width: 20px; height: 20px; box-sizing: border-box; padding: 0 5px; border-radius: 5px; background: var(--fill); font-size: 11.5px; color: var(--ink-2); }
+.bar { height: 4px; border-radius: 2px; background: var(--fill); overflow: hidden; }
+.bar i { display: block; height: 100%; border-radius: 2px; background: var(--accent); }
+.tip { display: inline-flex; align-items: center; gap: 8px; height: 24px; padding: 0 8px; border-radius: 6px; background: var(--ink); color: var(--chrome-top); font-size: 12px; }
+.tip kbd { opacity: .65; }
+.toast { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 13px; border-radius: 17px; background: var(--glass); box-shadow: var(--pop-shadow); font-size: 12.5px; }
+.toast .ic { color: var(--accent-ink); }
+.toast b { font-weight: 600; color: var(--accent-ink); margin-left: 6px; }
+.glabel { margin: 12px 0 6px; font-size: 11.5px; font-weight: 600; color: var(--ink-2); }
+.sep { height: 1px; margin: 5px 9px; background: var(--line); }
+
+/* Popovers and menus: the same glass as the command bar, one size down. */
+.pop { position: absolute; z-index: 6; box-sizing: border-box; padding: 12px; border-radius: 14px; background: var(--glass); -webkit-backdrop-filter: blur(28px) saturate(1.7); backdrop-filter: blur(28px) saturate(1.7); box-shadow: var(--pop-shadow); font-size: 13px; font-weight: 400; color: var(--ink); white-space: normal; }
+.pop.static { position: relative; }
+.pop-head { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-2); }
+.pop-title { display: block; font-size: 14px; font-weight: 600; color: var(--ink); }
+.pop-foot { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+.prow { display: flex; align-items: center; gap: 10px; min-height: 36px; }
+.menu { min-width: 220px; padding: 5px; border-radius: 11px; }
+.mi { display: flex; align-items: center; gap: 9px; height: 28px; padding: 0 9px; border-radius: 7px; white-space: nowrap; }
+.mi .ic { color: var(--ink-2); }
+.mi small { margin-left: auto; padding-left: 18px; font-size: 12px; color: var(--ink-3); }
+.mi:hover, .mi.hot { background: var(--accent-fill); }
+.pop.tabmenu { left: 124px; top: 24px; }
+.pop.site, .pop.prompt { left: 0; top: 38px; width: 300px; }
+.pop.downloads { left: -6px; bottom: 30px; width: 308px; }
+.pop.newspace { left: -64px; bottom: 30px; width: 272px; }
+.dl { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.dl .ic { color: var(--ink-2); }
+.dl .bar { margin: 5px 0 3px; }
+.find { position: absolute; top: 10px; right: 10px; display: flex; align-items: center; gap: 6px; height: 38px; width: 300px; box-sizing: border-box; padding: 0 6px 0 11px; border-radius: 12px; background: var(--glass); -webkit-backdrop-filter: blur(28px) saturate(1.7); backdrop-filter: blur(28px) saturate(1.7); box-shadow: var(--pop-shadow); font: 13px/1.3 system-ui, sans-serif; color: var(--ink); }
+.find > .ic { color: var(--ink-3); }
+.find small { font-size: 12px; color: var(--ink-3); white-space: nowrap; padding-right: 4px; }
+.icons { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.icons .ibtn { width: auto; height: 30px; }
+.hues { display: flex; gap: 10px; padding: 3px 3px 0; }
+.hue { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: var(--sw); cursor: pointer; transition: transform .1s; }
+.hue:hover { transform: scale(1.12); }
+.hue.on { outline: 2px solid var(--sw); outline-offset: 2px; }
+
+/* Command bar */
+.cmd { position: absolute; z-index: 5; left: calc(236px + (100% - 244px - 540px) / 2); top: 104px; width: 540px; box-sizing: border-box; border-radius: 16px; padding: 0 8px 8px; background: var(--glass); -webkit-backdrop-filter: blur(28px) saturate(1.7); backdrop-filter: blur(28px) saturate(1.7); box-shadow: var(--glass-shadow); }
+.win[data-os="win"] .cmd { border-radius: 12px; }
+.cmd-in { display: flex; align-items: center; gap: 12px; height: 54px; padding: 0 10px; font-size: 17px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.cmd-in .ic { color: var(--ink-3); width: 18px; height: 18px; }
+.cmd-in .ghost { color: var(--ink-3); }
+.caret { display: inline-block; width: 1.5px; height: 1.15em; vertical-align: -0.18em; margin: 0 0.5px; background: var(--accent); }
+.res { display: flex; align-items: center; gap: 11px; height: 40px; padding: 0 10px; border-radius: 10px; }
+.res:hover { background: var(--fill-hover); }
+.res .ic { color: var(--ink-2); }
+.res small { font-size: 12px; color: var(--ink-3); }
+.res em { font-style: normal; font-size: 12px; color: var(--ink-3); }
+.res.on { background: var(--accent-fill); }
+.res.on em { color: var(--accent-ink); font-weight: 550; }
+.cmd-foot { display: flex; gap: 16px; padding: 10px 10px 2px; margin-top: 6px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--ink-2); }
+.cmd-foot kbd { color: var(--ink); margin-right: 4px; }
+
+/* ---------- jaal's own pages (settings and the like) ---------- */
+.page.app { color: var(--ink); font-size: 13px; line-height: 1.4; }
+.settings { display: flex; }
+.set-nav { width: 180px; flex: none; box-sizing: border-box; padding: 20px 10px; border-right: 1px solid var(--line); }
+.set-title { padding: 0 9px 12px; font-size: 15px; font-weight: 650; }
+.set-nav .row.on { background: var(--fill); box-shadow: none; }
+.set-nav .row.on .ic { color: var(--accent-ink); }
+.set-body { flex: 1; min-width: 0; padding: 22px 36px; }
+.set-body h2 { margin: 0 0 3px; font-size: 20px; font-weight: 650; letter-spacing: -0.01em; }
+.set-sub { margin: 0 0 16px; color: var(--ink-2); max-width: 46ch; }
+.srow { display: flex; align-items: center; gap: 20px; min-height: 54px; box-sizing: border-box; padding: 8px 0; border-top: 1px solid var(--line); }
+.srow .txt { flex: 1; min-width: 0; }
+.srow .txt span { display: block; margin-top: 1px; font-size: 12px; color: var(--ink-2); }
+.splist { display: grid; gap: 4px; margin-bottom: 6px; }
+.splist .row { height: 44px; gap: 11px; cursor: pointer; }
+.splist .row.on { background: var(--fill); box-shadow: none; }
+.splist .tilei { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 8px; }
+.splist .tilei .ic { color: inherit; }
+.ed { max-width: 300px; }
+
+/* ---------- Component sheet ---------- */
+.win[data-screen="components"] .side { padding-top: 4px; }
+.win[data-screen="components"] .side .url { margin-bottom: 6px; }
+.sheet { display: grid; grid-template-columns: 1fr 1fr; gap: 22px 36px; align-content: start; padding: 22px 30px; }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+/* One tile per space color: the chrome it makes, with its accent as the dot. */
+.swtile { width: 46px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: linear-gradient(180deg, oklch(0.932 0.014 var(--h)), oklch(0.9 0.02 var(--h))); box-shadow: inset 0 0 0 1px var(--line); }
+.swtile::after { content: ""; width: 12px; height: 12px; border-radius: 50%; background: oklch(0.58 0.15 var(--ha)); }
+.win[data-theme="dark"] .swtile { background: linear-gradient(180deg, oklch(0.255 0.016 var(--h)), oklch(0.215 0.018 var(--h))); }
+.win[data-theme="dark"] .swtile::after { background: oklch(0.76 0.13 var(--ha)); }
+.grp h3 { margin: 0 0 10px; font-size: 11.5px; font-weight: 600; color: var(--ink-2); }
+.spec { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 10px; }
+.chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px 8px; }
+.chip { font-size: 10.5px; color: var(--ink-2); }
+.chip i { display: block; height: 26px; margin-bottom: 4px; border-radius: 7px; box-shadow: inset 0 0 0 1px var(--line); }
+.scale { display: grid; gap: 3px; color: var(--ink-2); font-size: 11.5px; }
+.scale span { display: flex; align-items: baseline; gap: 10px; }
+.scale b { width: 150px; font-weight: 400; color: var(--ink); white-space: nowrap; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-back" viewBox="0 0 16 16"><path d="M9.5 3.5 5 8l4.5 4.5"/></symbol>
+  <symbol id="i-fwd" viewBox="0 0 16 16"><path d="M6.5 3.5 11 8l-4.5 4.5"/></symbol>
+  <symbol id="i-reload" viewBox="0 0 16 16"><path d="M12.5 8a4.5 4.5 0 1 1-1.4-3.25"/><path d="M12.7 2.8v2.7H10"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2.5"/><path d="M6.2 3v10"/></symbol>
+  <symbol id="i-split" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="10" rx="2.5"/><path d="M8 3v10"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 16 16"><path d="M8 3.5v9M3.5 8h9"/></symbol>
+  <symbol id="i-x" viewBox="0 0 16 16"><path d="m4.8 4.8 6.4 6.4m0-6.4-6.4 6.4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.2"/><path d="m10.2 10.2 3 3"/></symbol>
+  <symbol id="i-ext" viewBox="0 0 16 16"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1.2"/><rect x="2.5" y="9" width="4.5" height="4.5" rx="1.2"/><rect x="9" y="9" width="4.5" height="4.5" rx="1.2"/><rect x="9" y="2.5" width="4.5" height="4.5" rx="1.2" transform="rotate(45 11.25 4.75)"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2.5 5A1.5 1.5 0 0 1 4 3.5h2.3L7.7 5H12a1.5 1.5 0 0 1 1.5 1.5V11a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 11z"/></symbol>
+  <symbol id="i-speaker" viewBox="0 0 16 16"><path d="M3 6.5h2L8 4v8L5 9.5H3z"/><path d="M10.6 6a3 3 0 0 1 0 4"/></symbol>
+  <symbol id="i-download" viewBox="0 0 16 16"><path d="M8 3v7m0 0L5.2 7.3M8 10l2.8-2.7M3.5 12.5h9"/></symbol>
+  <symbol id="i-tune" viewBox="0 0 16 16"><path d="M3 5.5h4.5m3.5 0h2M3 10.5h2m3.5 0H13"/><circle cx="9.3" cy="5.5" r="1.6"/><circle cx="6.7" cy="10.5" r="1.6"/></symbol>
+  <symbol id="i-spaces" viewBox="0 0 16 16"><path d="m8 2.8 5.3 2.9L8 8.6 2.7 5.7z"/><path d="m2.7 9 5.3 2.9L13.3 9"/></symbol>
+  <symbol id="i-more" viewBox="0 0 16 16"><path d="M4 8h.01M8 8h.01M12 8h.01" stroke-width="2"/></symbol>
+  <symbol id="i-link" viewBox="0 0 16 16"><path d="M7 9a2.5 2.5 0 0 0 3.5 0l2-2A2.5 2.5 0 0 0 9 3.5l-.8.8"/><path d="M9 7a2.5 2.5 0 0 0-3.5 0l-2 2A2.5 2.5 0 0 0 7 12.5l.8-.8"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 16 16"><path d="M6 2.5h4l-.5 4 2 2.5h-7l2-2.5zM8 9v4.5"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 16 16"><path d="m6 4 4 4-4 4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><path d="m3.5 8.5 3 3 6-7"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5.5a2.5 2.5 0 0 1 5 0V7"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 16 16"><path d="M4.5 11V7.5a3.5 3.5 0 0 1 7 0V11l1 1.5h-9z"/><path d="M6.8 13.6a1.3 1.3 0 0 0 2.4 0"/></symbol>
+  <symbol id="i-file" viewBox="0 0 16 16"><path d="M4.5 2.5H9l3 3v8H4.5zM9 2.5v3h3"/></symbol>
+  <symbol id="i-up" viewBox="0 0 16 16"><path d="m4 10 4-4 4 4"/></symbol>
+  <symbol id="i-down" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></symbol>
+  <symbol id="i-updown" viewBox="0 0 16 16"><path d="M5.5 6.5 8 4l2.5 2.5M5.5 9.5 8 12l2.5-2.5"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 16 16"><rect x="2" y="4.5" width="12" height="7.5" rx="1.5"/><path d="M5 7h.01M8 7h.01M11 7h.01M5.5 9.5h5"/></symbol>
+  <symbol id="i-sparkle" viewBox="0 0 16 16"><path d="M8 2.5 9.3 6.7 13.5 8 9.3 9.3 8 13.5 6.7 9.3 2.5 8l4.2-1.3z"/></symbol>
+  <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.5"/><path d="M8 7.5v3M8 5.3h.01"/></symbol>
+  <!-- Space icons -->
+  <symbol id="i-code" viewBox="0 0 16 16"><path d="m6 4.5-3.5 3.5L6 11.5M10 4.5 13.5 8 10 11.5"/></symbol>
+  <symbol id="i-book" viewBox="0 0 16 16"><path d="M8 4.5C6.8 3.6 5 3.3 2.5 3.5V12c2.5-.2 4.3.1 5.5 1 1.2-.9 3-1.2 5.5-1V3.5C11 3.3 9.2 3.6 8 4.5zM8 4.5V13"/></symbol>
+  <symbol id="i-home" viewBox="0 0 16 16"><path d="M2.5 7.5 8 3l5.5 4.5M4 6.5V13h8V6.5"/></symbol>
+  <symbol id="i-star" viewBox="0 0 16 16"><path d="m8 2.5 1.7 3.5 3.8.5-2.8 2.7.7 3.8L8 11.2 4.6 13l.7-3.8-2.8-2.7 3.8-.5z"/></symbol>
+  <symbol id="i-heart" viewBox="0 0 16 16"><path d="M8 13S2.5 9.8 2.5 6.3A2.8 2.8 0 0 1 8 5a2.8 2.8 0 0 1 5.5 1.3C13.5 9.8 8 13 8 13z"/></symbol>
+  <symbol id="i-music" viewBox="0 0 16 16"><path d="M6 11.5V4l6.5-1.5V10"/><circle cx="4.5" cy="11.5" r="1.5"/><circle cx="11" cy="10" r="1.5"/></symbol>
+  <symbol id="i-bag" viewBox="0 0 16 16"><path d="M3.5 5.5h9l-.7 7.5H4.2zM6 5.5v-1a2 2 0 0 1 4 0v1"/></symbol>
+  <symbol id="i-plane" viewBox="0 0 16 16"><path d="M13.5 2.5 2.5 7l4.2 1.8L8.5 13zM6.7 8.8l6.8-6.3"/></symbol>
+  <symbol id="i-leaf" viewBox="0 0 16 16"><path d="M3.5 12.5c0-6 3.5-9 9-9 0 5.5-3 9-9 9zM3.5 12.5l5-5"/></symbol>
+  <symbol id="i-briefcase" viewBox="0 0 16 16"><rect x="2.5" y="5.5" width="11" height="7.5" rx="1.5"/><path d="M6 5.5V4.3a.8.8 0 0 1 .8-.8h2.4a.8.8 0 0 1 .8.8v1.2M2.5 9h11"/></symbol>
+  <symbol id="i-flask" viewBox="0 0 16 16"><path d="M6.5 2.5h3M7 2.5v4L3.6 12a1 1 0 0 0 .9 1.5h7a1 1 0 0 0 .9-1.5L9 6.5v-4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 16 16"><path d="M12.5 9.5a5 5 0 0 1-6-6 5 5 0 1 0 6 6z"/></symbol>
+</svg>
+
+<div class="wrap" id="root">
+  <div class="controls" id="controls"></div>
+  <p class="cap" id="cap"></p>
+  <div class="fit"><div class="win" id="win"></div></div>
+</div>
+
+<script>
+const SCREENS = [['window', 'Window'], ['settings', 'Settings'], ['components', 'Components']];
+const VIEWS = [['resting', 'Resting'], ['command', 'Command'], ['split', 'Split'], ['hidden', 'No sidebar'], ['tabmenu', 'Tab menu'], ['site', 'Site'], ['downloads', 'Downloads'], ['find', 'Find'], ['newspace', 'New space'], ['prompt', 'Prompt']];
+const SECTIONS = [['general', 'General'], ['spaces', 'Spaces'], ['ai', 'AI']];
+const SHEETS = [['controls', 'Controls'], ['tokens', 'Colors and type']];
+const THEMES = [['light', 'Light'], ['dark', 'Dark']];
+const PLATFORMS = [['mac', 'Mac'], ['win', 'Windows']];
+
+const state = { screen: 'window', view: 'resting', section: 'general', sheet: 'controls', space: 'jaal', theme: 'light', os: 'mac' };
+
+const CAPTIONS = {
+  resting: 'The page is a card. The chrome takes the space\u2019s color, and the active tab is the only raised thing in the sidebar.',
+  command: 'The command bar floats over the page on blurred glass. The page is not dimmed. The first match completes as you type.',
+  split: 'Two cards share the window. The focused pane gets the accent ring. The split is one raised group in the sidebar, with a line for each pane.',
+  hidden: 'With the sidebar hidden, the page takes the window inside an 8px frame of the space\u2019s color. The sidebar and the window buttons slide back over the page when the pointer touches the left edge.',
+  tabmenu: 'Right-click a tab, here a pinned one. Every menu is the command bar\u2019s glass, one size down, and the pointed row takes the accent tint.',
+  site: 'Click the icon at the left of the address. One popover holds the connection, the extensions that can act on this page, and the site\u2019s permissions.',
+  downloads: 'The download button at the bottom left opens the last few downloads.',
+  find: 'Find floats at the top right of the page card. The current match takes the accent and the others stay yellow.',
+  newspace: 'The plus at the bottom right makes a space. The window previews the icon and the color as you pick them, and a new space starts empty. Click an icon or a color to try it.',
+  prompt: 'When a site asks for a permission, the question hangs from the address, so it is clear which site asked.',
+  general: 'Settings is a tab like any other, so it gets the same card. One row per setting: what it does on the left, the control on the right.',
+  spaces: 'A space is a name, an icon and a color. Click a space, an icon or a color: the whole window follows.',
+  ai: 'AI stays off until the user turns it on. These rows are my guess at what it needs, not a decision.',
+  controls: 'Every control at real size. Hover them, press them and tab through them. Sidebar parts sit on the chrome, and everything else sits on a card.',
+  tokens: 'Every color comes from the two hues of the space, so switch space or theme and the chips follow. Sizes are in pixels.',
+};
+const WINDOWS_NOTE = ' On Windows the window buttons sit in the sidebar\u2019s top row, as in Zen.';
+
+const icon = (name, cls = '') => `<svg class="ic${cls ? ` ${cls}` : ''}"><use href="#i-${name}"/></svg>`;
+
+// letter, background, text color
+const FAVICONS = {
+  mail: ['M', '#d9483b'], cal: ['9', '#3b7ded'], gh: ['g', '#1f2328'], yt: ['\u25B6\uFE0E', '#e62117'],
+  x: ['X', '#000'], claude: ['\u2733\uFE0E', '#d97757'], linear: ['L', '#5e6ad2'], notion: ['N', '#fff', '#111'],
+  depot: ['D', '#f0603a'], cef: ['C', '#2f7dd1'], helium: ['He', '#6c4fd8'], jaal: ['j', '#c4552b'],
+  speed: ['S', '#16a34a'], gpui: ['Z', '#0b57d0'],
+  portal: ['C', '#e2452f'], grade: ['G', '#1b9e8a'], overleaf: ['O', '#3f9c35'], pset: ['\u2211', '#3f5fd0'],
+  wiki: ['W', '#fff', '#111'], desmos: ['D', '#2f9e5b'],
+  recipe: ['R', '#e07a2f'], trail: ['T', '#2f8f5b'], review: ['H', '#5b6470'],
+  adblock: ['A', '#b3261e'], pass: ['P', '#1a6fd6'], dark: ['D', '#2b2b2f'],
+};
+const favicon = (key) => {
+  const [letter, bg, fg = '#fff'] = FAVICONS[key];
+  return `<span class="fv" style="background:${bg};color:${fg}">${letter}</span>`;
+};
+
+const FIGURE = `<div class="pg-fig">
+  <div><svg viewBox="0 0 150 74"><rect class="f-win" x="1" y="1" width="148" height="72" rx="6"/><rect class="f-page" x="34" y="10" width="106" height="54" rx="4"/><rect class="f-bar" x="52" y="20" width="70" height="18" rx="5"/></svg><span>Overlay view in one window</span></div>
+  <div><svg viewBox="0 0 150 74"><rect class="f-win" x="1" y="9" width="130" height="64" rx="6"/><rect class="f-page" x="30" y="17" width="94" height="48" rx="4"/><rect class="f-dash" x="42" y="1" width="106" height="34" rx="6"/><rect class="f-bar" x="56" y="10" width="70" height="16" rx="5"/></svg><span>A second window on top (fix A)</span></div>
+  <div><svg viewBox="0 0 150 74"><rect class="f-win" x="1" y="1" width="148" height="72" rx="6"/><rect class="f-page" x="34" y="10" width="106" height="54" rx="4"/><rect class="f-dash" x="34" y="10" width="106" height="54" rx="4"/><rect class="f-bar" x="52" y="20" width="70" height="18" rx="5"/></svg><span>The page as a texture (fix B)</span></div>
+</div>`;
+
+const FAVORITES = ['mail', 'cal', 'gh', 'yt', 'x', 'claude', 'linear', 'notion'];
+const SPACE_ICONS = ['code', 'book', 'home', 'star', 'heart', 'music', 'bag', 'plane', 'leaf', 'briefcase', 'flask', 'moon'];
+// [chrome hue, accent hue]. Only the first one uses two different hues.
+const HUES = [[75, 42], [95, 85], [155, 155], [200, 200], [255, 255], [300, 300], [350, 350], [20, 20]];
+
+// today[0] is the active tab and shows `main`. today[splitWith] joins it in split view and shows `side`.
+// today[1] is the tab the command bar and the tab menu point at.
+const SPACES = {
+  jaal: {
+    name: 'Jaal', icon: 'code', h: 75, ha: 42,
+    url: ['jaal.app', '/research/how-native-apps-draw'],
+    pinned: [
+      { fav: 'gh', title: 'jaal · Pull requests' },
+      { fav: 'depot', title: 'Depot · Builds' },
+      { fav: 'cef', title: 'CEF 156 · API docs' },
+      { fav: 'helium', title: 'Helium' },
+      { folder: true, title: 'Research', count: 3 },
+    ],
+    today: [
+      { fav: 'jaal', title: 'How native apps draw' },
+      { fav: 'speed', title: 'Speedometer 3.1', site: 'browserbench.org' },
+      { fav: 'gpui', title: 'GPUI · UI framework for Rust' },
+      { fav: 'gh', title: 'cef-rs · export-cef-dir' },
+      { fav: 'yt', title: 'lofi beats to code to', audio: true },
+    ],
+    splitWith: 2,
+    query: ['sp', 'eedometer 3.1'],
+    matches: [
+      { lead: icon('split'), title: 'Split view with…', kind: 'Command' },
+      { lead: icon('spaces'), title: 'Move tab to space…', kind: 'Command' },
+      { lead: icon('search'), title: 'speedometer 3.1 vs 3.0', kind: 'Suggestion' },
+    ],
+    find: 'page',
+    main: {
+      site: 'jaal', nav: ['Plan', 'Bake-off', 'Research'], kicker: 'Research · 7 Nov 2026', title: 'How native apps draw',
+      lede: 'Main loops, who draws what, and the three ways to put your own UI over a Chrome page.',
+      figure: FIGURE,
+      body: [
+        'A browser has two things to draw: the page, which Chromium paints in its own GPU process, and the UI around it. The hard part is where they overlap. A command bar with a blurred background has to read the page\u2019s pixels, and only one of the two can own them.',
+        'Each toolkit answers that differently, and the answer decides how the app starts, scrolls and resizes.',
+      ],
+    },
+    side: {
+      site: 'gpui', nav: ['Docs', 'Examples'], kicker: 'Rust · GPU accelerated', title: 'A fast UI framework for Rust',
+      lede: 'One tree of views, drawn on the GPU every frame.',
+      body: ['A view is a struct that knows how to render itself. The framework lays it out and paints it.'],
+      code: 'impl Render for Sidebar {\n  fn render(&amp;mut self)\n    -&gt; impl IntoElement {\n    div().flex().flex_col()\n      .children(self.rows())\n  }\n}',
+    },
+  },
+  school: {
+    name: 'School', icon: 'book', h: 255, ha: 255,
+    url: ['courses.example.edu', '/math-221/problem-set-6'],
+    pinned: [
+      { fav: 'portal', title: 'Course portal' },
+      { fav: 'grade', title: 'Gradescope' },
+      { fav: 'overleaf', title: 'Overleaf · Lab report 4' },
+      { folder: true, title: 'Linear algebra', count: 6 },
+    ],
+    today: [
+      { fav: 'pset', title: 'Problem set 6 · Math 221' },
+      { fav: 'wiki', title: 'Eigenvalues and eigenvectors', site: 'en.wikipedia.org' },
+      { fav: 'desmos', title: 'Desmos · Graphing calculator' },
+      { fav: 'yt', title: 'Lecture 18 · Diagonalization' },
+    ],
+    splitWith: 1,
+    query: ['ei', 'genvalues and eigenvectors'],
+    matches: [
+      { lead: icon('search'), title: 'eigenvalues of a 2×2 matrix', kind: 'Suggestion' },
+      { lead: icon('search'), title: 'eigenvector calculator', kind: 'Suggestion' },
+    ],
+    find: 'eigenvalues',
+    main: {
+      site: 'Math 221', nav: ['Schedule', 'Problem sets', 'Notes'], kicker: 'Problem set 6 · Due Fri 13 Nov', title: 'Eigenvalues and eigenvectors',
+      lede: 'Six problems on finding eigenvalues, diagonalizing a matrix, and what both mean as geometry.',
+      body: [
+        '<b>1.</b> Find the eigenvalues of the matrix with rows (2, 1) and (1, 2). Give one eigenvector for each.',
+        '<b>2.</b> Show that a square matrix and its transpose have the same eigenvalues.',
+        '<b>3.</b> A 2×2 matrix has trace 5 and determinant 6. Find its eigenvalues without writing the matrix down.',
+        '<b>4.</b> Diagonalize the matrix from problem 1, and use the result to compute its tenth power.',
+      ],
+    },
+    side: {
+      site: 'Encyclopedia', nav: ['Article', 'Talk'], kicker: 'Linear algebra', title: 'Eigenvalues and eigenvectors',
+      lede: 'An eigenvector of a linear map is a nonzero vector that the map only scales.',
+      body: [
+        'The scale factor is the eigenvalue. If a map sends the vector v to 3v, then v is an eigenvector with eigenvalue 3.',
+        'Geometrically, an eigenvector points along a direction that the map stretches or flips but does not turn.',
+      ],
+    },
+  },
+  personal: {
+    name: 'Personal', icon: 'home', h: 155, ha: 155,
+    url: ['recipes.example.com', '/dal-tadka'],
+    pinned: [
+      { fav: 'mail', title: 'Mail' },
+      { fav: 'cal', title: 'Calendar' },
+      { fav: 'notion', title: 'Notes' },
+      { folder: true, title: 'Trips', count: 4 },
+    ],
+    today: [
+      { fav: 'recipe', title: 'Dal tadka · Weeknight' },
+      { fav: 'trail', title: 'Monsoon trail · Map', site: 'trails.example.org' },
+      { fav: 'review', title: 'Headphones under 100 · Reviews' },
+    ],
+    splitWith: 1,
+    query: ['mo', 'nsoon trail · Map'],
+    matches: [
+      { lead: icon('spaces'), title: 'Move tab to space…', kind: 'Command' },
+      { lead: icon('search'), title: 'monsoon trail parking', kind: 'Suggestion' },
+    ],
+    find: 'dal',
+    main: {
+      site: 'Weeknight', nav: ['Recipes', 'Pantry'], kicker: '30 minutes · Serves 4', title: 'Dal tadka',
+      lede: 'Yellow lentils, simmered soft, finished with cumin, garlic and chili bloomed in hot ghee.',
+      body: [
+        'Rinse 1 cup of toor dal until the water runs clear. Simmer it with turmeric and 3 cups of water for 20 minutes, until it breaks down.',
+        'Heat 2 tablespoons of ghee in a small pan. Add cumin seeds, sliced garlic and a dried chili. Pour it over the dal while it still sizzles.',
+        'Salt it, squeeze in half a lemon, and serve it with rice.',
+      ],
+    },
+    side: {
+      site: 'Trails', nav: ['Map', 'Photos'], kicker: '9 km loop · Moderate', title: 'Monsoon trail',
+      lede: 'A forest loop with two stream crossings and one long climb.',
+      body: [
+        'Start from the east gate. The first 2 km are flat and shaded.',
+        'After rain, the second crossing runs knee deep. Carry sandals.',
+      ],
+    },
+  },
+};
+// The space being made in the "New space" view.
+const draft = { name: 'Reading', icon: 'moon', h: 300, ha: 300, url: null, pinned: [], today: [] };
+
+/* ---------- Small parts ---------- */
+const toggle = (on) => `<button class="toggle" role="switch" aria-checked="${on}"></button>`;
+const select = (value) => `<span class="select">${value}${icon('updown')}</span>`;
+const segc = (options, pressed) => `<span class="segc">${options.map((o) => `<button type="button" aria-pressed="${o === pressed}">${o}</button>`).join('')}</span>`;
+
+// Name, icon and color. `target` says what a click edits: the draft or the current space.
+const spaceEditor = (space, target) => `
+  <div class="ed" data-edit="${target}">
+    <div class="glabel" style="margin-top:0">Name</div>
+    <input class="field" value="${space.name}" aria-label="Name">
+    <div class="glabel">Icon</div>
+    <div class="icons">${SPACE_ICONS.map((name) => `<button type="button" class="ibtn${name === space.icon ? ' on' : ''}" data-icon="${name}" aria-label="${name}">${icon(name)}</button>`).join('')}</div>
+    <div class="glabel">Color</div>
+    <div class="hues">${HUES.map(([h, ha]) => `<button type="button" class="hue${ha === space.ha ? ' on' : ''}" data-h="${h}" data-ha="${ha}" style="--sw:oklch(0.64 0.15 ${ha})" aria-label="Hue ${ha}"></button>`).join('')}</div>
+  </div>`;
+
+/* ---------- Sidebar ---------- */
+const row = (tab, { active = false, hover = false, extra = '' } = {}) => {
+  const lead = tab.folder ? icon('folder') : tab.icon ? icon(tab.icon) : favicon(tab.fav);
+  const tail = tab.folder ? `<small>${tab.count}</small>` : tab.audio ? icon('speaker') : icon('x', 'close');
+  return `<div class="row${active ? ' on' : ''}${hover ? ' hover' : ''}">${lead}<span class="t">${tab.title}</span>${tail}${extra}</div>`;
+};
+const splitRow = (left, right) => `
+  <div class="row on split">
+    <span class="half focus">${favicon(left.fav)}<span class="t">${left.title}</span></span>
+    <span class="half">${favicon(right.fav)}<span class="t">${right.title}</span></span>
+  </div>`;
+
+const CAPTION_BUTTONS = `<span class="capbtns">
+  <span><svg viewBox="0 0 10 10"><path d="M0 5.5h10"/></svg></span>
+  <span><svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9"/></svg></span>
+  <span><svg viewBox="0 0 10 10"><path d="m0 0 10 10M10 0 0 10"/></svg></span>
+</span>`;
+const topRow = () => {
+  const nav = `${icon('sidebar')}${icon('back')}<span class="dim">${icon('fwd')}</span>${icon('reload')}`;
+  return state.os === 'mac'
+    ? `<div class="top"><span class="lights"><i></i><i></i><i></i></span><span class="grow"></span>${nav}</div>`
+    : `<div class="top">${icon('more')}${nav}<span class="grow"></span>${CAPTION_BUTTONS}</div>`;
+};
+const spaceSwitcher = (extraSpace) => `<span class="spaces">${Object.entries(SPACES).map(([key, sp]) =>
+  `<span class="sp${!extraSpace && key === state.space ? ' on' : ''}" data-space="${key}" title="${sp.name}">${icon(sp.icon)}</span>`).join('')}${extraSpace ? `<span class="sp on">${icon(extraSpace.icon)}</span>` : ''}</span>`;
+
+// `url` is [host, path] or null. `today` and `pinned` are finished HTML for those rows.
+const sidebar = ({ space, url, today, pinned, mod, urlPop = '', downloadPop = '', plusPop = '', drafting = false }) => `
+  <aside class="side">
+    ${topRow()}
+    <div class="url">${icon('tune')}${url ? `<span class="t"><b>${url[0]}</b>${url[1]}</span>` : '<span class="t ph">Search or enter address</span>'}${icon('ext')}${urlPop}</div>
+    <div class="favs">${FAVORITES.map((f) => `<span class="tile">${favicon(f)}</span>`).join('')}</div>
+    <div class="label">${icon(space.icon)}${space.name}</div>
+    ${pinned ?? (space.pinned.length ? space.pinned.map((tab) => row(tab)).join('') : '<div class="hint">Drag a tab here to pin it</div>')}
+    <div class="divider"><span>Today</span><hr><span>Clear</span></div>
+    <div class="row new">${icon('plus')}<span class="t">New tab</span><small>${mod}T</small></div>
+    ${today}
+    <span class="grow"></span>
+    <div class="foot"><span class="anchor">${icon('download')}${downloadPop}</span><span class="grow"></span>${spaceSwitcher(drafting ? space : null)}<span class="grow"></span><span class="anchor">${icon('plus')}${plusPop}</span></div>
+  </aside>`;
+
+/* ---------- Overlays ---------- */
+const commandBar = (space, mod) => {
+  const hit = space.today[1];
+  const [typed, ghost] = space.query;
+  const results = [
+    { lead: favicon(hit.fav), title: hit.title, sub: hit.site, kind: 'Switch to tab', active: true },
+    ...space.matches,
+    { lead: icon('search'), title: `Search the web for \u201C${typed}\u201D`, kind: 'Search' },
+  ];
+  return `
+  <div class="cmd">
+    <div class="cmd-in">${icon('search')}<span>${typed}<span class="caret"></span><span class="ghost">${ghost}</span></span></div>
+    ${results.map((r) => `<div class="res${r.active ? ' on' : ''}">${r.lead}<span class="t">${r.title}${r.sub ? ` <small>&nbsp;${r.sub}</small>` : ''}</span><em>${r.kind}</em></div>`).join('')}
+    <div class="cmd-foot"><span><kbd>↵</kbd>Switch to tab</span><span><kbd>${mod}↵</kbd>Open in new tab</span><span class="grow"></span><span><kbd>esc</kbd>Close</span></div>
+  </div>`;
+};
+// The menu of a pinned tab. A tab in Today says "Pin in <space>" instead of "Unpin".
+const tabMenu = (mod, cls = 'tabmenu') => `
+  <div class="pop menu ${cls}">
+    <div class="mi">${icon('link')}Copy link<small>${mod === '⌘' ? '⇧⌘C' : 'Ctrl+Shift+C'}</small></div>
+    <div class="mi hot">${icon('split')}Open in split view</div>
+    <div class="mi">${icon('pin')}Unpin</div>
+    <div class="mi">${icon('spaces')}Move to space<small>${icon('chev')}</small></div>
+    <div class="sep"></div>
+    <div class="mi">${icon('x')}Close tab<small>${mod}W</small></div>
+  </div>`;
+const extRow = (fav, name, note, on) => `<div class="prow">${favicon(fav)}<span class="t">${name}<span class="sub">${note}</span></span>${toggle(on)}</div>`;
+const sitePop = (space) => `
+  <div class="pop site">
+    <div class="pop-head">${icon('lock')}<span class="t">Connection is secure</span><button type="button" class="ibtn" aria-label="Copy link">${icon('link')}</button></div>
+    <span class="pop-title">${space.url[0]}</span>
+    <div class="glabel">Extensions on this page</div>
+    ${extRow('adblock', 'Ad blocker', '12 blocked on this page', true)}
+    ${extRow('pass', 'Password manager', 'Can fill on this site', true)}
+    ${extRow('dark', 'Dark mode', 'Off for this site', false)}
+    <div class="glabel">Permissions</div>
+    <div class="prow"><span class="t">Notifications</span>${select('Ask')}</div>
+    <div class="prow"><span class="t">Camera and microphone</span>${select('Block')}</div>
+    <div class="pop-foot"><button type="button" class="btn ghost">Clear cookies</button><span class="grow"></span><button type="button" class="btn">Site settings</button></div>
+  </div>`;
+const promptPop = (host, cls = 'prompt') => `
+  <div class="pop ${cls}">
+    <div class="prow" style="align-items:flex-start"><span class="badge">${icon('bell')}</span><span><span class="pop-title">${host} wants to send you notifications</span><span class="sub" style="margin-top:3px">You can change this later from the address.</span></span></div>
+    <div class="pop-foot"><span class="grow"></span><button type="button" class="btn">Block</button><button type="button" class="btn primary">Allow</button></div>
+  </div>`;
+const downloadsPop = () => `
+  <div class="pop downloads">
+    <div class="pop-head"><span class="pop-title">Downloads</span><span class="grow"></span><button type="button" class="btn ghost">Show all</button></div>
+    <div class="dl">${icon('file')}<span class="t">cef_binary_156_macosarm64.tar.bz2<div class="bar"><i style="width:26%"></i></div><span class="sub">63 of 240 MB · 40 s left</span></span><button type="button" class="ibtn" aria-label="Cancel">${icon('x')}</button></div>
+    <div class="dl">${icon('file')}<span class="t">bakeoff-results.csv<span class="sub">18 KB · localhost</span></span></div>
+    <div class="dl">${icon('file')}<span class="t">how-native-apps-draw.pdf<span class="sub">1.2 MB · jaal.app</span></span></div>
+  </div>`;
+const newSpacePop = () => `
+  <div class="pop newspace">
+    <span class="pop-title" style="margin-bottom:10px">New space</span>
+    ${spaceEditor(draft, 'draft')}
+    <div class="pop-foot"><span class="grow"></span><button type="button" class="btn">Cancel</button><button type="button" class="btn primary">Create space</button></div>
+  </div>`;
+
+/* ---------- Pages ---------- */
+// `mark` wraps the words Find matched. It is the identity outside the Find view.
+const pageInner = (p, mark = (text) => text) => `
+  <div class="pg">
+    <div class="pg-nav"><b>${p.site}</b><span class="grow"></span>${p.nav.map((n) => `<span>${n}</span>`).join('')}</div>
+    <div class="pg-kick">${p.kicker}</div>
+    <h1>${mark(p.title)}</h1>
+    <p class="pg-lede">${mark(p.lede)}</p>
+    ${p.figure ?? ''}
+    ${p.body.map((text) => `<p>${mark(text)}</p>`).join('')}
+    ${p.code ? `<pre>${p.code}</pre>` : ''}
+  </div>`;
+
+const browserWindow = (space, mod) => {
+  const view = state.view;
+  const drafting = view === 'newspace';
+  let found = 0;
+  const mark = view === 'find'
+    ? (text) => text.replace(new RegExp(`\\b${space.find}\\b`, 'gi'), (word) => `<mark${found++ === 0 ? ' class="cur"' : ''}>${word}</mark>`)
+    : undefined;
+
+  let panes;
+  if (drafting) {
+    panes = `<div class="empty"><span class="badge">${icon(space.icon)}</span><b>${space.name} is empty</b><span>Press ${mod}T to open a tab.</span></div>`;
+  } else {
+    const inner = pageInner(space.main, mark);
+    const findBar = view === 'find'
+      ? `<div class="find">${icon('search')}<span class="t">${space.find}<span class="caret"></span></span><small>1 of ${found}</small><button type="button" class="ibtn" aria-label="Previous">${icon('up')}</button><button type="button" class="ibtn" aria-label="Next">${icon('down')}</button><button type="button" class="ibtn" aria-label="Close">${icon('x')}</button></div>`
+      : '';
+    panes = `<div class="page focus">${inner}${findBar}</div>${view === 'split' ? `<div class="page">${pageInner(space.side)}</div>` : ''}`;
+  }
+
+  let today;
+  if (view === 'split') {
+    const rest = space.today.filter((_, i) => i !== 0 && i !== space.splitWith);
+    today = splitRow(space.today[0], space.today[space.splitWith]) + rest.map((tab) => row(tab)).join('');
+  } else {
+    today = space.today.map((tab, i) => row(tab, { active: i === 0 })).join('');
+  }
+  // The tab menu opens on the second pinned tab, where it has room to open downward.
+  const pinned = view === 'tabmenu'
+    ? space.pinned.map((tab, i) => row(tab, { hover: i === 1, extra: i === 1 ? tabMenu(mod) : '' })).join('')
+    : undefined;
+
+  const side = view === 'hidden' ? '' : sidebar({
+    space, url: space.url, today, pinned, mod, drafting,
+    urlPop: view === 'site' ? sitePop(space) : view === 'prompt' ? promptPop(space.url[0]) : '',
+    downloadPop: view === 'downloads' ? downloadsPop() : '',
+    plusPop: drafting ? newSpacePop() : '',
+  });
+  return `${side}<div class="panes">${panes}</div>${view === 'command' ? commandBar(space, mod) : ''}`;
+};
+
+const srow = (title, note, control) => `<div class="srow"><div class="txt">${title}${note ? `<span>${note}</span>` : ''}</div>${control}</div>`;
+const SETTINGS_NAV = [
+  ['general', 'General', 'tune'], ['spaces', 'Spaces', 'spaces'], ['search', 'Search', 'search'], ['privacy', 'Privacy', 'lock'],
+  ['extensions', 'Extensions', 'ext'], ['shortcuts', 'Shortcuts', 'keyboard'], ['ai', 'AI', 'sparkle'], ['about', 'About', 'info'],
+];
+const SETTINGS_BODY = {
+  general: () => `
+    <h2>General</h2><p class="set-sub">How jaal looks and what it does when it starts.</p>
+    ${srow('Theme', 'Auto follows the system.', segc(['Auto', 'Light', 'Dark'], 'Auto'))}
+    ${srow('Default browser', 'jaal is not your default browser.', '<button type="button" class="btn">Make default</button>')}
+    ${srow('When jaal starts', '', select('Open where I left off'))}
+    ${srow('Search engine', 'Used by the command bar.', select('DuckDuckGo'))}
+    ${srow('Archive tabs in Today', 'Tabs you have not opened for this long leave the sidebar.', segc(['12 hours', '1 day', '7 days', 'Never'], '1 day'))}
+    ${srow('Save downloads to', state.os === 'mac' ? '~/Downloads' : 'C:\\Users\\you\\Downloads', '<button type="button" class="btn">Change…</button>')}
+    ${srow('Ask where to save each file', '', toggle(false))}`,
+  spaces: (space) => `
+    <h2>Spaces</h2><p class="set-sub">A space keeps its own pinned tabs and its own Today.</p>
+    <div class="splist">${Object.entries(SPACES).map(([key, sp]) => `
+      <div class="row${key === state.space ? ' on' : ''}" data-space="${key}">
+        <span class="tilei" style="color:oklch(0.62 0.15 ${sp.ha});background:oklch(0.62 0.15 ${sp.ha} / .16)">${icon(sp.icon)}</span>
+        <span class="t">${sp.name}<span class="sub">${sp.pinned.length} pinned · ${sp.today.length} in Today</span></span>
+      </div>`).join('')}</div>
+    <div class="srow" style="align-items:flex-start;padding-top:14px">${spaceEditor(space, 'space')}</div>
+    ${srow('Keep logins separate', 'Sites in this space do not see the cookies of other spaces.', toggle(false))}
+    <div class="srow"><button type="button" class="btn">${icon('plus')}New space</button><span class="grow"></span><button type="button" class="btn ghost danger">Delete ${space.name}</button></div>`,
+  ai: () => `
+    <h2>AI</h2><p class="set-sub">jaal works fully without AI. Nothing is sent anywhere until you turn it on.</p>
+    ${srow('Use AI in jaal', '', toggle(true))}
+    ${srow('Provider', 'You sign in with your own account.', segc(['Claude', 'Codex'], 'Claude'))}
+    ${srow('Account', 'Not connected', '<button type="button" class="btn primary">Connect…</button>')}
+    ${srow('Ask before AI reads a page', 'AI only sees a page after you say yes.', toggle(true))}
+    ${srow('Ask about this page', 'Opens a panel beside the page.', toggle(true))}
+    ${srow('Tidy tabs', 'Groups the tabs in Today into folders.', toggle(false))}`,
+};
+const settingsWindow = (space, mod) => {
+  const today = row({ icon: 'tune', title: 'Settings' }, { active: true }) + space.today.map((tab) => row(tab)).join('');
+  const nav = SETTINGS_NAV.map(([key, label, glyph]) =>
+    `<div class="row${key === state.section ? ' on' : ''}"${SETTINGS_BODY[key] ? ` data-section="${key}"` : ''}>${icon(glyph)}<span class="t">${label}</span></div>`).join('');
+  return `${sidebar({ space, url: ['jaal://settings', `/${state.section}`], today, mod })}
+    <div class="panes"><div class="page app settings">
+      <nav class="set-nav"><div class="set-title">Settings</div>${nav}</nav>
+      <div class="set-body">${SETTINGS_BODY[state.section](space)}</div>
+    </div></div>`;
+};
+
+const chip = (name, value) => `<span class="chip"><i style="background:${value}"></i>${name}</span>`;
+const componentSheet = (mod) => `
+  <aside class="side">
+    <div class="glabel">Address</div>
+    <div class="url">${icon('tune')}<span class="t"><b>jaal.app</b>/research</span>${icon('ext')}</div>
+    <div class="url focus">${icon('search')}<span class="t"><span class="sel">jaal.app/research</span></span></div>
+    <div class="url loading">${icon('tune')}<span class="t"><b>jaal.app</b>/plan</span>${icon('x')}<i class="load"></i></div>
+    <div class="glabel">Tab rows</div>
+    ${row({ fav: 'cef', title: 'Resting' })}
+    ${row({ fav: 'depot', title: 'Hover' }, { hover: true })}
+    ${row({ fav: 'jaal', title: 'Active' }, { active: true })}
+    <div class="row"><span class="spin"></span><span class="t">Loading</span></div>
+    ${row({ fav: 'yt', title: 'Playing audio', audio: true })}
+    <div class="row asleep">${favicon('helium')}<span class="t">Unloaded</span></div>
+    <div class="drop"></div>
+    <div class="row drag">${favicon('speed')}<span class="t">Dragging</span></div>
+    <div class="row">${icon('folder')}<span class="t">Folder, open</span>${icon('down')}</div>
+    <div class="row child">${favicon('gh')}<span class="t">Tab in a folder</span></div>
+    ${splitRow({ fav: 'jaal', title: 'Split, focused pane' }, { fav: 'gpui', title: 'Split, other pane' })}
+    <div class="glabel">Spaces</div>
+    <div class="foot" style="padding:0">${icon('download')}<span class="grow"></span>${spaceSwitcher(null)}<span class="grow"></span>${icon('plus')}</div>
+  </aside>
+  <div class="panes"><div class="page app sheet">
+    <div class="grp"><h3>Buttons</h3>
+      <div class="spec"><button type="button" class="btn primary">Create space</button><button type="button" class="btn">Cancel</button><button type="button" class="btn ghost">Show all</button></div>
+      <div class="spec"><button type="button" class="btn ghost danger">Delete space</button><button type="button" class="btn" disabled>Disabled</button><button type="button" class="btn">${icon('plus')}With icon</button></div>
+      <div class="spec"><button type="button" class="ibtn" aria-label="Link">${icon('link')}</button><button type="button" class="ibtn on" aria-label="Pin">${icon('pin')}</button><button type="button" class="ibtn" aria-label="Close">${icon('x')}</button></div>
+    </div>
+    <div class="grp"><h3>Text fields</h3>
+      <div class="spec"><input class="field" placeholder="Space name" aria-label="Empty field"></div>
+      <div class="spec"><input class="field focus" value="Reading" aria-label="Focused field"></div>
+    </div>
+    <div class="grp"><h3>Choices</h3>
+      <div class="spec">${toggle(true)}${toggle(false)}<span class="choice"><span class="check on">${icon('check')}</span>Checked</span><span class="choice"><span class="check"></span>Not</span></div>
+      <div class="spec"><span class="choice"><span class="radio on"></span>This one</span><span class="choice"><span class="radio"></span>That one</span></div>
+      <div class="spec">${segc(['Auto', 'Light', 'Dark'], 'Auto')}${select('DuckDuckGo')}</div>
+      <div class="spec"><input type="range" min="0" max="100" value="40" aria-label="Slider"></div>
+    </div>
+    <div class="grp"><h3>Menu</h3>
+      ${tabMenu(mod, 'static')}
+    </div>
+    <div class="grp"><h3>Tooltip, toast, keys, progress</h3>
+      <div class="spec"><span class="tip">New tab<kbd>${mod}T</kbd></span><span class="tip">Hide sidebar</span></div>
+      <div class="spec"><span class="toast">${icon('check')}Link copied</span><span class="toast">Tab archived<b>Undo</b></span></div>
+      <div class="spec"><span class="key">${mod.replace('+', '')}</span><span class="key">K</span><span class="key">esc</span><span class="key">↵</span></div>
+      <div class="spec"><div class="bar" style="width:180px"><i style="width:26%"></i></div><span class="spin"></span></div>
+    </div>
+    <div class="grp"><h3>Popover</h3>
+      ${promptPop('jaal.app', 'static')}
+    </div>
+  </div></div>`;
+
+const tokenSheet = () => `
+  <div class="panes"><div class="page app sheet">
+    <div class="grp"><h3>Colors of this space</h3>
+      <div class="chips">
+        ${chip('chrome', 'var(--chrome-top)')}${chip('fill', 'var(--fill)')}${chip('line', 'var(--line-strong)')}${chip('raised', 'var(--raised)')}
+        ${chip('ink', 'var(--ink)')}${chip('ink-2', 'var(--ink-2)')}${chip('ink-3', 'var(--ink-3)')}${chip('danger', 'var(--danger)')}
+        ${chip('accent', 'var(--accent)')}${chip('accent-ink', 'var(--accent-ink)')}${chip('accent-fill', 'var(--accent-fill)')}${chip('glass', 'var(--glass)')}
+      </div>
+      <h3 style="margin-top:24px">The eight space colors</h3>
+      <div class="swatches">${HUES.map(([h, ha]) => `<span class="swtile" style="--h:${h};--ha:${ha}"></span>`).join('')}</div>
+      <h3 style="margin-top:24px">The twelve space icons</h3>
+      <div class="swatches" style="color:var(--ink-2);gap:14px">${SPACE_ICONS.map((name) => icon(name)).join('')}</div>
+    </div>
+    <div class="grp"><h3>Type and sizes</h3>
+      <div class="scale">
+        <span><b style="font-size:17px">Command bar input</b>17</span>
+        <span><b style="font-size:14px;font-weight:600">Popover title</b>14 semibold</span>
+        <span><b style="font-size:13px">Tab row, menu, body</b>13</span>
+        <span><b style="font-size:12.5px">Address, button</b>12.5</span>
+        <span><b style="font-size:11.5px;font-weight:600">Section label</b>11.5 semibold</span>
+        <span><b style="font-size:11px">Shortcut, count</b>11</span>
+        <span style="margin-top:6px">Heights: row 30, address 32, favorite 38, button 28, menu row 28.</span>
+        <span>Corners: glass 16, popover 14, window 12, card and favorite 10, row 8, button 7, favicon 4.</span>
+      </div>
+    </div>
+  </div></div>`;
+
+/* ---------- Board ---------- */
+const win = document.getElementById('win');
+const controls = document.getElementById('controls');
+const segGroup = (key, options) => `<div class="seg" role="group">${options.map(([value, label]) =>
+  `<button type="button" data-key="${key}" data-value="${value}" aria-pressed="${state[key] === value}">${label}</button>`).join('')}</div>`;
+
+// The window is drawn 1000 wide and scaled down to fit narrow frames.
+const fit = () => {
+  const box = win.parentElement;
+  const scale = Math.min(1, box.clientWidth / 1000);
+  win.style.transform = `scale(${scale})`;
+  box.style.height = `${win.offsetHeight * scale}px`;
+};
+
+const render = () => {
+  const mod = state.os === 'mac' ? '\u2318' : 'Ctrl+';
+  const drafting = state.screen === 'window' && state.view === 'newspace';
+  const space = drafting ? draft : SPACES[state.space];
+  win.dataset.screen = state.screen;
+  const tokens = state.screen === 'components' && state.sheet === 'tokens';
+  // The token sheet has no sidebar, so it borrows the full-width layout of the hidden-sidebar view.
+  win.dataset.view = state.screen === 'window' ? state.view : tokens ? 'hidden' : 'none';
+  win.dataset.theme = state.theme;
+  win.dataset.os = state.os;
+  win.style.setProperty('--h', space.h);
+  win.style.setProperty('--ha', space.ha);
+  win.innerHTML = tokens ? tokenSheet()
+    : state.screen === 'components' ? componentSheet(mod)
+    : state.screen === 'settings' ? settingsWindow(space, mod)
+    : browserWindow(space, mod);
+
+  const sub = state.screen === 'window' ? segGroup('view', VIEWS) : state.screen === 'settings' ? segGroup('section', SECTIONS) : segGroup('sheet', SHEETS);
+  controls.innerHTML = `${segGroup('screen', SCREENS)}${segGroup('space', Object.entries(SPACES).map(([key, sp]) => [key, sp.name]))}${segGroup('theme', THEMES)}${segGroup('os', PLATFORMS)}${sub}`;
+  const captionKey = state.screen === 'window' ? state.view : state.screen === 'settings' ? state.section : state.sheet;
+  document.getElementById('cap').textContent = CAPTIONS[captionKey] + (state.os === 'win' && state.screen !== 'components' ? WINDOWS_NOTE : '');
+  fit();
+};
+
+controls.addEventListener('click', (event) => {
+  const button = event.target.closest('button');
+  if (!button) return;
+  state[button.dataset.key] = button.dataset.value;
+  render();
+});
+win.addEventListener('click', (event) => {
+  const target = event.target;
+  // Switches and segmented controls work in place, so they can be felt.
+  const sw = target.closest('.toggle');
+  if (sw) return sw.setAttribute('aria-checked', String(sw.getAttribute('aria-checked') !== 'true'));
+  const segButton = target.closest('.segc button');
+  if (segButton) {
+    for (const other of segButton.parentElement.children) other.setAttribute('aria-pressed', String(other === segButton));
+    return;
+  }
+  // Icon and color pickers edit the draft space or the current one.
+  const pick = target.closest('[data-icon], [data-ha]');
+  if (pick) {
+    const edited = pick.closest('[data-edit]').dataset.edit === 'draft' ? draft : SPACES[state.space];
+    if (pick.dataset.icon) edited.icon = pick.dataset.icon;
+    else { edited.h = Number(pick.dataset.h); edited.ha = Number(pick.dataset.ha); }
+    return render();
+  }
+  const section = target.closest('[data-section]');
+  if (section) { state.section = section.dataset.section; return render(); }
+  const spaceButton = target.closest('[data-space]');
+  if (spaceButton) {
+    state.space = spaceButton.dataset.space;
+    if (state.view === 'newspace') state.view = 'resting';
+    render();
+  }
+});
+
+render();
+new ResizeObserver(fit).observe(document.getElementById('root'));
+</script>
+</body>
+</html>
