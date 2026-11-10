@@ -63,7 +63,11 @@ const SIDEBAR = 236;
 const FRAME = 8;
 const BAR_WIDTH = 540;
 const BAR_TOP = 104;
-const BAR_HEIGHT_ONE_RESULT = 146;
+// An empty bar lists the open tabs, and three are open whenever these checks
+// measure it: the test page, the striped page and chrome://webui-browser.
+// The sum is command_bar.rs's bar_height(3): the input row, the list's
+// padding and three rows, the footer, the bottom padding.
+const BAR_HEIGHT_THREE_TABS = 54 + (8 + 3 * 40) + 36 + 8;
 
 mkdirSync(results, { recursive: true });
 const logPath = join(results, "ui.log");
@@ -134,7 +138,7 @@ const pageRect = (c: Rect): Rect => ({
 });
 const sidebarRect = (c: Rect): Rect => ({ left: c.left, top: c.top, right: c.left + dip(SIDEBAR), bottom: c.bottom });
 /// Where the command bar is: centered over the page, BAR_TOP below the top.
-function barRect(c: Rect, barHeight = BAR_HEIGHT_ONE_RESULT): Rect {
+function barRect(c: Rect, barHeight = BAR_HEIGHT_THREE_TABS): Rect {
   const page = pageRect(c);
   const left = Math.round(page.left + (width(page) - dip(BAR_WIDTH)) / 2);
   return { left, top: c.top + dip(BAR_TOP), right: left + dip(BAR_WIDTH), bottom: c.top + dip(BAR_TOP + barHeight) };
@@ -425,8 +429,9 @@ try {
   await check("command bar: draws over the page with blur and a shadow", async () => {
     const c = client();
     since();
-    // The second tab's row in the sidebar.
-    ps("click", c.left + dip(110), c.top + dip(189));
+    // The second tab's row in the sidebar: below the top row, the address
+    // field, the space's name, the "Today" divider, New tab and the first tab.
+    ps("click", c.left + dip(110), c.top + dip(217));
     await waitFor("the striped page", 10_000, () => /title: "jaal M2 blur test", loading: false, active: true/.test(fresh()));
     await sleep(900);
     const problems = await barProblems("resting", "m2-command-bar-windows");
@@ -442,9 +447,9 @@ try {
     // A light stripe near the bar's middle: stripes are 60 CSS px wide and
     // the second of every four is the light one.
     let x = bar.left + dip(200);
-    while (light(x, bar.bottom + dip(170)) < 200 && x < bar.right) x += dip(15);
+    while (light(x, bar.bottom + dip(150)) < 200 && x < bar.right) x += dip(15);
     const near = light(x, bar.bottom + dip(10));
-    const far = light(x, bar.bottom + dip(170));
+    const far = light(x, bar.bottom + dip(150));
     const tasks = topLevel(browser.pid).filter((w) => w.taskbar);
     ps("key", "esc");
     await waitFor("the bar to close", 6000, () => fresh().includes("ui: command bar closed"));

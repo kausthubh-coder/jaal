@@ -47,5 +47,16 @@ Changes from upstream, each marked `jaal:` in the code:
   - `window.rs`: `activate` on a child window only takes keyboard focus. The
     host places and shows it.
 
+- Hover after the pointer leaves (`platform/windows/events.rs`): on
+  `WM_MOUSELEAVE` upstream only flips the window's hovered flag, so the
+  element under the pointer stays drawn as hovered. The window now also gets
+  a `MouseExited` event with where the pointer went, as on the Mac.
+
+- Shadows at a clip's edge (`scene.rs`): upstream drops a primitive whose
+  box is outside the content mask. A shadow draws up to three blur radii
+  past its box, so its blur could reach into the mask and still be dropped,
+  which left a hard cut. The test now uses the box plus that margin. jaal's
+  command bar shows its shadow through clipped openings and needs this.
+
 Everything else is upstream. Keep changes small and marked, so moving to a
 newer gpui means re-applying a short list.

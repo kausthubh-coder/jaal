@@ -23,8 +23,9 @@ use jaal_engine::{Engine, Placement, Tab, ViewOptions};
 
 /// The bar's width, and the room around it for its shadow, in DIPs.
 pub const BAR_WIDTH: i32 = 540;
-// The shadow is 64 DIPs of blur dropped 28 DIPs down; anything less than
-// this clips it at the window's edge.
+// The shadow is dropped 28 DIPs down and fades out over three deviations of
+// 32 DIPs, so it ends 124 DIPs below the bar. Anything less than this clips
+// it at the window's edge.
 const MARGIN: i32 = 128;
 /// Where the bar's top edge sits below the window's, as in the design.
 const BAR_TOP: i32 = 104;
@@ -215,6 +216,7 @@ impl CommandBar {
                 },
                 theme.ink.into(),
                 theme.ink_3.into(),
+                theme.accent.into(),
                 cx,
             )
         });
@@ -339,13 +341,18 @@ impl CommandBar {
             .when(!selected, |row| {
                 row.hover(|style| style.bg(theme.fill_hover))
             })
-            .child(
-                svg()
+            .child(match result {
+                // A tab shows its site, as its row in the sidebar does.
+                BarResult::SwitchTo { host, .. } => {
+                    crate::shell::favicon(host, theme).into_any_element()
+                }
+                BarResult::Open { .. } => svg()
                     .path(lead)
                     .size(px(16.))
                     .flex_none()
-                    .text_color(theme.ink_2),
-            )
+                    .text_color(theme.ink_2)
+                    .into_any_element(),
+            })
             .child(
                 div()
                     .flex_1()
@@ -358,7 +365,7 @@ impl CommandBar {
                         div()
                             .flex_none()
                             .text_size(px(12.))
-                            .text_color(theme.ink_3)
+                            .text_color(theme.ink_2)
                             .child(detail),
                     ),
             )
@@ -370,7 +377,7 @@ impl CommandBar {
                         kind.text_color(theme.accent_ink)
                             .font_weight(FontWeight::MEDIUM)
                     })
-                    .when(!selected, |kind| kind.text_color(theme.ink_3))
+                    .when(!selected, |kind| kind.text_color(theme.ink_2))
                     .child(kind),
             )
     }
@@ -440,10 +447,65 @@ impl Render for CommandBar {
             (_, BarMode::Navigate) => "Go",
         };
 
+        // CSS draws a box's shadow only outside the box. GPUI draws it under
+        // the box as well, and this box is see-through, so the shadow would
+        // grey the glass. A twin of the bar casts the shadow instead, and it
+        // shows only through four openings around the bar. Each opening
+        // reaches a few DIPs under the bar's edge, to cover the corners the
+        // bar's rounding leaves open.
+        let (margin, bar_width) = (MARGIN as f32, BAR_WIDTH as f32);
+        let bar_height = bar_height(self.results.len()) as f32;
+        let under = 3.;
+        let shadow = theme.glass_shadow.clone();
+        let shadow_through = move |left: f32, top: f32, width: f32, height: f32| {
+            div()
+                .absolute()
+                .left(px(left))
+                .top(px(top))
+                .w(px(width))
+                .h(px(height))
+                .overflow_hidden()
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(margin - left))
+                        .top(px(margin - top))
+                        .w(px(bar_width))
+                        .h(px(bar_height))
+                        .rounded(px(BAR_RADIUS))
+                        .shadow(shadow.clone()),
+                )
+        };
+
         div()
             .size_full()
+            .relative()
             // Room for the shadow. A click here is a click outside the bar.
             .p(px(MARGIN as f32))
+            .child(shadow_through(
+                0.,
+                0.,
+                bar_width + 2. * margin,
+                margin + under,
+            ))
+            .child(shadow_through(
+                0.,
+                margin + bar_height - under,
+                bar_width + 2. * margin,
+                margin + under,
+            ))
+            .child(shadow_through(
+                0.,
+                margin + under,
+                margin + under,
+                bar_height - 2. * under,
+            ))
+            .child(shadow_through(
+                margin + bar_width - under,
+                margin + under,
+                margin + under,
+                bar_height - 2. * under,
+            ))
             .font_family(theme::FONT)
             .text_size(px(13.))
             .line_height(px(17.))
@@ -469,9 +531,11 @@ impl Render for CommandBar {
                     .px(px(PADDING as f32))
                     .pb(px(PADDING as f32))
                     .rounded(px(BAR_RADIUS))
-                    // The glass: a tint over the page the engine blurred.
+                    // The glass: a tint over the page the engine blurred, with
+                    // the design's hairline as its edge.
                     .bg(theme.glass)
-                    .shadow(theme.glass_shadow.clone())
+                    .border_1()
+                    .border_color(theme.glass_edge)
                     .child(
                         div()
                             .h(px(INPUT_HEIGHT as f32))

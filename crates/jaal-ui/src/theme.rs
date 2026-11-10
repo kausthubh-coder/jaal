@@ -65,19 +65,29 @@ pub struct Theme {
     /// The one raised thing in the sidebar: the active tab.
     pub raised: Rgba,
     pub raised_shadow: Vec<BoxShadow>,
-    /// The command bar's glass and the shadow under it.
+    /// The command bar's glass, its hairline edge and the shadow under it.
+    ///
+    /// The glass is more opaque than the design's 74% (light) and 72%
+    /// (dark). The design shows it over a page of the same tone. Over the
+    /// opposite tone (a dark bar on a white page) those values turn the
+    /// glass mid-grey and its secondary text stops being readable.
     pub glass: Rgba,
+    pub glass_edge: Rgba,
     pub glass_shadow: Vec<BoxShadow>,
     /// The page card's shadow and hairline, drawn by the engine.
     pub card_shadow: Rgba,
     pub card_outline: Rgba,
 }
 
+/// A shadow with the design's CSS numbers.
 fn shadow(color: Rgba, y: f32, blur: f32, spread: f32) -> BoxShadow {
     BoxShadow {
         color: Hsla::from(color),
         offset: point(px(0.), px(y)),
-        blur_radius: px(blur),
+        // CSS blurs a shadow with a Gaussian whose standard deviation is half
+        // the blur value. GPUI uses its blur radius as the deviation itself,
+        // so the same number gives a shadow twice as wide and half as dark.
+        blur_radius: px(blur / 2.),
         spread_radius: px(spread),
     }
 }
@@ -109,11 +119,9 @@ impl Theme {
                     shadow(white(0.07), 0., 0., 0.5),
                     shadow(black(0.3), 1., 2., 0.),
                 ],
-                glass: oklch(0.27, 0.014, h, 0.72),
-                glass_shadow: vec![
-                    shadow(white(0.18), 0., 0., 0.5),
-                    shadow(black(0.55), 28., 64., 0.),
-                ],
+                glass: oklch(0.27, 0.014, h, 0.86),
+                glass_edge: white(0.14),
+                glass_shadow: vec![shadow(black(0.55), 28., 64., 0.)],
                 card_shadow: black(0.35),
                 card_outline: white(0.1),
             }
@@ -136,9 +144,9 @@ impl Theme {
                     shadow(oklch(0.3, 0.04, h, 0.12), 0., 0., 0.5),
                     shadow(oklch(0.3, 0.04, h, 0.16), 1., 2.5, 0.),
                 ],
-                glass: oklch(0.975, 0.006, h, 0.74),
+                glass: oklch(0.975, 0.006, h, 0.82),
+                glass_edge: oklch(0.25, 0.03, h, 0.16),
                 glass_shadow: vec![
-                    shadow(oklch(0.25, 0.03, h, 0.24), 0., 0., 0.5),
                     shadow(oklch(0.25, 0.03, h, 0.08), 2., 6., 0.),
                     shadow(oklch(0.25, 0.03, h, 0.32), 28., 64., 0.),
                 ],

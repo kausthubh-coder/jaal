@@ -8,7 +8,7 @@ use gpui::{
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, Hsla, KeyBinding,
     LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
     ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div,
-    fill, point, prelude::*, px, relative, rgba, size,
+    fill, point, prelude::*, px, relative, size,
 };
 use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
@@ -67,6 +67,8 @@ pub struct TextInput {
     placeholder: SharedString,
     text_color: Hsla,
     placeholder_color: Hsla,
+    /// The caret's color; the selection is a wash of it.
+    accent: Hsla,
     selected_range: Range<usize>,
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
@@ -82,6 +84,7 @@ impl TextInput {
         placeholder: impl Into<SharedString>,
         text_color: Hsla,
         placeholder_color: Hsla,
+        accent: Hsla,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
@@ -90,6 +93,7 @@ impl TextInput {
             placeholder: placeholder.into(),
             text_color,
             placeholder_color,
+            accent,
             selected_range: 0..0,
             selection_reversed: false,
             marked_range: None,
@@ -485,6 +489,7 @@ impl Element for TextElement {
         let content = input.content.clone();
         let selected_range = input.selected_range.clone();
         let cursor = input.cursor_offset();
+        let accent = input.accent;
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
@@ -542,7 +547,7 @@ impl Element for TextElement {
                         point(bounds.left() + cursor_pos, bounds.top()),
                         size(px(1.5), bounds.bottom() - bounds.top()),
                     ),
-                    rgba(0x3b82f6ff),
+                    accent,
                 )),
             )
         } else {
@@ -558,7 +563,7 @@ impl Element for TextElement {
                             bounds.bottom(),
                         ),
                     ),
-                    rgba(0x3b82f640),
+                    accent.opacity(0.25),
                 )),
                 None,
             )

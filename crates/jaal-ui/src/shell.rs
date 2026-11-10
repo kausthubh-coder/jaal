@@ -18,6 +18,8 @@ use gpui::{
     MouseDownEvent, SharedString, Subscription, UniformListScrollHandle, Window, WindowHandle,
     actions, div, linear_color_stop, linear_gradient, prelude::*, px, svg, uniform_list,
 };
+use jaal_bakeoff_shared::bench::{frames_enabled, mark};
+use jaal_bakeoff_shared::bench_modes::{self as bench, BenchConfig};
 use jaal_engine::NativeView;
 use jaal_engine::{
     Engine, Event, Key, NavAction, Placement, Tab, TabState, ViewOptions, WindowInfo, WindowState,
@@ -153,6 +155,8 @@ pub struct Config {
     pub fake_rows: usize,
     pub dark: Option<bool>,
     pub frameless: bool,
+    /// The bake-off's bench modes (`JAAL_BENCH_*`), for engine/scripts/bench.ts.
+    pub bench: BenchConfig,
 }
 
 pub struct Shell {
@@ -173,6 +177,11 @@ pub struct Shell {
     /// alone (fullscreen).
     page_alone: Option<bool>,
     theme: Theme,
+    bench: BenchConfig,
+    /// The first tab has finished loading once.
+    first_load_marked: bool,
+    /// A scroll run is going: `render` marks frames.
+    bench_running: bool,
     focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -200,6 +209,7 @@ impl Shell {
                 "Search or enter address",
                 theme.ink.into(),
                 theme.ink_3.into(),
+                theme.accent.into(),
                 cx,
             )
         });
@@ -261,6 +271,9 @@ impl Shell {
             info: None,
             page_alone: None,
             theme,
+            bench: config.bench.clone(),
+            first_load_marked: false,
+            bench_running: false,
             focus_handle: cx.focus_handle(),
             _subscriptions: subscriptions,
         };
@@ -308,7 +321,15 @@ impl Shell {
 
     fn on_engine_event(&mut self, event: Event, window: &mut Window, cx: &mut Context<Self>) {
         match event {
-            Event::TabInserted(state) | Event::TabState(state) => self.on_tab_state(state, cx),
+            Event::TabInserted(state) | Event::TabState(state) => {
+                let loaded = !state.loading && !state.url.is_empty();
+                self.on_tab_state(state, cx);
+                if loaded && !self.first_load_marked {
+                    self.first_load_marked = true;
+                    mark("first_load");
+                    self.start_frame_bench(window, cx);
+                }
+            }
             Event::TabRemoved(tab) => {
                 self.tabs.retain(|row| row.tab != tab);
                 if self.active == Some(tab) {
@@ -551,6 +572,41 @@ impl Shell {
         }
     }
 
+    fn start_frame_bench(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.bench.scroll {
+            self.bench_tick(std::time::Instant::now(), window, cx);
+        }
+    }
+
+    /// One frame of the bake-off's scroll run: move the list, then ask for
+    /// the next frame. `render` writes the `frame` marks. The same steps as
+    /// gpui-a's, so the two compare.
+    fn bench_tick(
+        &mut self,
+        started: std::time::Instant,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if started.elapsed() >= bench::RUN_TIME {
+            self.bench_running = false;
+            let _ = self.engine.quit();
+            return;
+        }
+        self.bench_running = true;
+        let handle = self.scroll.0.borrow().base_handle.clone();
+        let offset = handle.offset();
+        let mut y = offset.y - px(bench::SCROLL_PX_PER_FRAME);
+        if -y > handle.max_offset().height {
+            y = px(0.);
+        }
+        handle.set_offset(gpui::point(offset.x, y));
+        cx.notify();
+        let this = cx.entity().downgrade();
+        window.on_next_frame(move |window, cx| {
+            let _ = this.update(cx, |this, cx| this.bench_tick(started, window, cx));
+        });
+    }
+
     fn navigate_active(&mut self, action: NavAction) {
         if let Some(tab) = self.active {
             let _ = self.engine.navigate(tab, action);
@@ -721,7 +777,22 @@ impl Shell {
             .active_row()
             .map(|row| split_url(&row.url))
             .unwrap_or_default();
+        let loading = self.active_row().is_some_and(|row| row.loading);
         field
+            .relative()
+            .when(loading, |field| {
+                // The design's loading mark: an accent line along the
+                // field's bottom edge.
+                field.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .bottom_0()
+                        .h(px(2.))
+                        .w(gpui::relative(0.55))
+                        .bg(theme.accent),
+                )
+            })
             .bg(theme.fill)
             .hover(|style| style.bg(theme.line))
             .on_click(cx.listener(|this, _, window, cx| this.edit_address(window, cx)))
@@ -750,7 +821,14 @@ impl Shell {
                             .text_color(theme.ink)
                             .child(host),
                     )
-                    .child(div().truncate().text_color(theme.ink_2).child(path))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(theme.ink_2)
+                            .child(path),
+                    )
             })
     }
 
@@ -817,7 +895,7 @@ fn tab_element_id(tab: Tab) -> usize {
 
 /// A site's stand-in icon: its first letter on a tile whose color comes from
 /// the host, until real favicons cross the engine API.
-fn favicon(host: &str, theme: &Theme) -> impl IntoElement + use<> {
+pub(crate) fn favicon(host: &str, theme: &Theme) -> impl IntoElement + use<> {
     let letter = host
         .chars()
         .find(|c| c.is_alphanumeric())
@@ -853,6 +931,9 @@ impl Focusable for Shell {
 
 impl Render for Shell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.bench_running && frames_enabled() {
+            mark("frame");
+        }
         // The acceptance run reads how far the list has scrolled.
         // Rows have one height, so the offset tells which row is at the top.
         let top = (-f32::from(self.scroll.0.borrow().base_handle.offset().y) / ROW_HEIGHT)
@@ -926,6 +1007,19 @@ impl Render for Shell {
                             .text_color(theme.accent),
                     )
                     .child("Jaal"),
+            )
+            .child(
+                div()
+                    .h(px(28.))
+                    .flex_none()
+                    .px(px(9.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .text_size(px(11.))
+                    .text_color(theme.ink_3)
+                    .child("Today")
+                    .child(div().flex_1().h(px(1.)).bg(theme.line)),
             )
             .child(
                 div()

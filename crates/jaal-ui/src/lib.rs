@@ -11,6 +11,9 @@
 //! - `JAAL_UI_THEME`: `light` or `dark` (default: the system's).
 //! - `JAAL_UI_FRAME=system`: keep the system title bar.
 //! - `JAAL_UI_LOG`: a file that gets one line per engine event and UI action.
+//! - `JAAL_BENCH_LOG`, `JAAL_BENCH_FRAMES`, `JAAL_BENCH_SCROLL`: the
+//!   bake-off's bench marks and its scroll run (bakeoff/shared), which
+//!   engine/scripts/bench.ts reads.
 
 pub mod command_bar;
 pub mod icons;
@@ -71,6 +74,7 @@ fn config_from_env() -> shell::Config {
             _ => None,
         },
         frameless: std::env::var("JAAL_UI_FRAME").as_deref() != Ok("system"),
+        bench: jaal_bakeoff_shared::bench_modes::BenchConfig::from_env(),
     }
 }
 
@@ -80,6 +84,8 @@ fn config_from_env() -> shell::Config {
 pub unsafe extern "C" fn jaal_ui_main(get_api: sys::jaal_engine_get_api_fn) {
     use gpui::AppContext as _;
     use jaal_engine::{Engine, WindowOptions};
+
+    jaal_bakeoff_shared::bench::mark("ui_main");
 
     // SAFETY: the engine passes its own get_api, on its UI thread.
     let engine = match unsafe { Engine::from_get_api(get_api) } {

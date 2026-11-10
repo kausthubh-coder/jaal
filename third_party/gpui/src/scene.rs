@@ -66,9 +66,16 @@ impl Scene {
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
-        let clipped_bounds = primitive
-            .bounds()
-            .intersect(&primitive.content_mask().bounds);
+        // jaal: a shadow draws up to three blur radii outside its box (the
+        // shaders' margin). Upstream tests the box alone, so a shadow whose
+        // blur reaches into the mask is dropped when its box lies outside it.
+        let drawn_bounds = match &primitive {
+            Primitive::Shadow(shadow) => shadow
+                .bounds
+                .dilate(ScaledPixels(3. * shadow.blur_radius.0)),
+            other => *other.bounds(),
+        };
+        let clipped_bounds = drawn_bounds.intersect(&primitive.content_mask().bounds);
 
         if clipped_bounds.is_empty() {
             return;

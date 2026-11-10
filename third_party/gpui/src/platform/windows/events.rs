@@ -64,7 +64,7 @@ impl WindowsWindowInner {
             WM_CLOSE => self.handle_close_msg(),
             WM_DESTROY => self.handle_destroy_msg(handle),
             WM_MOUSEMOVE => self.handle_mouse_move_msg(handle, lparam, wparam),
-            WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(),
+            WM_MOUSELEAVE | WM_NCMOUSELEAVE => self.handle_mouse_leave_msg(handle),
             WM_NCMOUSEMOVE => self.handle_nc_mouse_move_msg(handle, lparam),
             // Treat double click as a second single click, since we track the double clicks ourselves.
             // If you don't interact with any elements, this will fall through to the windows default
@@ -333,14 +333,35 @@ impl WindowsWindowInner {
         if handled { Some(0) } else { Some(1) }
     }
 
-    fn handle_mouse_leave_msg(&self) -> Option<isize> {
+    fn handle_mouse_leave_msg(&self, handle: HWND) -> Option<isize> {
         let mut lock = self.state.borrow_mut();
         lock.hovered = false;
+        let scale_factor = lock.scale_factor;
         if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
             drop(lock);
             callback(false);
             self.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+        } else {
+            drop(lock);
         }
+
+        // jaal: upstream stops here, so whatever was under the pointer stays
+        // drawn as hovered until the pointer comes back. Tell the window
+        // where the pointer went, as the Mac platform does.
+        let mut cursor = POINT::default();
+        unsafe {
+            GetCursorPos(&mut cursor).log_err();
+            ScreenToClient(handle, &mut cursor).ok().log_err();
+        }
+        let Some(mut func) = self.state.borrow_mut().callbacks.input.take() else {
+            return Some(0);
+        };
+        func(PlatformInput::MouseExited(MouseExitEvent {
+            position: logical_point(cursor.x as f32, cursor.y as f32, scale_factor),
+            pressed_button: None,
+            modifiers: current_modifiers(),
+        }));
+        self.state.borrow_mut().callbacks.input = Some(func);
 
         Some(0)
     }

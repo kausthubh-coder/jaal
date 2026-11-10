@@ -43,6 +43,8 @@
 #include "ui/events/types/event_type.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/geometry/rounded_corners_f.h"
+#include "ui/gfx/geometry/rrect_f.h"
+#include "ui/gfx/geometry/size_f.h"
 #include "cc/paint/paint_flags.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/geometry/point.h"
@@ -299,6 +301,11 @@ class PageAreaView : public views::View {
         bounds.Inset(view.options.backdrop_inset);
         view.blur->SetBoundsRect(bounds);
         view.blur->SetVisible(view.options.visible);
+        // Said outright: the bounds a layer works out from its own rounded
+        // corners left the blur square at the corners.
+        view.blur->layer()->SetBackdropFilterBounds(gfx::RRectF(
+            gfx::RectF(gfx::SizeF(bounds.size())),
+            view.options.backdrop_corner_radius));
       }
     }
     // Moving a child HWND sends it WM_SIZE at once. While the app is inside
