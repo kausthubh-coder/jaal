@@ -1,0 +1,52 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>jaal M2 test</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 20px system-ui, sans-serif; background: #f4f1ea; color: #1f1c18; }
+  body { display: grid; grid-template-rows: repeat(5, 1fr); }
+  body > :not(script) { display: grid; place-items: center; margin: 0; border: 0; border-bottom: 1px solid #d8d2c6; font: inherit; color: inherit; background: none; text-decoration: none; }
+  input[type=text] { text-align: center; background: #fff; }
+  #keys { font-size: 15px; color: #6b655c; }
+</style>
+<!--
+  Engine acceptance page for M2. Five bands of equal height, top to bottom, so
+  a test can aim at one by its position in the page rect:
+    1. a link to m2-linked.html
+    2. a text field; what is typed shows in the title as `typed:<text>`
+    3. a file input, as one big label
+    4. a button that opens a JavaScript alert (a tab-modal dialog)
+    5. the keys this page saw, also in the title as `keys:<list>`
+  Ctrl+B is this page's own shortcut: it calls preventDefault, so the app must
+  never get it. Every other key is left alone.
+-->
+<a id="link" href="m2-linked.html">Band 1: a link</a>
+<input id="text" type="text" placeholder="Band 2: type here" autocomplete="off">
+<label id="file-label">Band 3: choose a file<input id="file" type="file" hidden></label>
+<button id="alert">Band 4: open a JavaScript alert</button>
+<div id="keys">Band 5: no keys yet</div>
+<script>
+  const seen = [];
+  document.getElementById("text").addEventListener("input", (event) => {
+    document.title = `typed:${event.target.value}`;
+  });
+  document.getElementById("alert").addEventListener("click", () => {
+    document.title = "alert:open";
+    alert("jaal M2: a tab-modal dialog");
+    document.title = "alert:closed";
+  });
+  document.getElementById("file").addEventListener("cancel", () => {
+    document.title = "file:cancelled";
+  });
+  document.getElementById("file").addEventListener("change", (event) => {
+    document.title = `file:${event.target.files.length}`;
+  });
+  addEventListener("keydown", (event) => {
+    if (["Control", "Shift", "Alt", "Meta"].includes(event.key)) return;
+    const name = `${event.ctrlKey ? "ctrl+" : ""}${event.key.toLowerCase()}`;
+    if (name === "ctrl+b") event.preventDefault();
+    if (!event.ctrlKey) return;
+    seen.push(name);
+    document.getElementById("keys").textContent = `Band 5: this page saw ${seen.join(" ")}`;
+    document.title = `keys:${seen.join(",")}`;
+  });
+</script>

@@ -183,6 +183,25 @@ impl Application {
         }));
     }
 
+    /// jaal: embedded mode. Starts the app on a thread whose message loop
+    /// belongs to a host (Chromium's message pump in the jaal engine), calls
+    /// `on_finish_launching`, and returns instead of running a loop. The app
+    /// then lives until the process ends. See JAAL.md.
+    pub fn run_embedded<F>(self, on_finish_launching: F)
+    where
+        F: 'static + FnOnce(&mut App),
+    {
+        let this = self.0.clone();
+        let platform = self.0.borrow().platform.clone();
+        platform.run_embedded(Box::new(move || {
+            let cx = &mut *this.borrow_mut();
+            on_finish_launching(cx);
+        }));
+        // `run` keeps the app alive by not returning. Here the host's loop
+        // outlives this call, so the app must too.
+        std::mem::forget(self);
+    }
+
     /// Register a handler to be invoked when the platform instructs the application
     /// to open one or more URLs.
     pub fn on_open_urls<F>(&self, mut callback: F) -> &Self

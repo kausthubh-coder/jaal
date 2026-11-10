@@ -2768,6 +2768,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "jaal-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "jaal-bakeoff-shared",
+ "jaal-engine",
+ "raw-window-handle",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "jaal-ui-hello"
 version = "0.1.0"
 dependencies = [

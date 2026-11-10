@@ -4,6 +4,8 @@
 #   win-input.ps1 click <x> <y>          left click at screen coordinates
 #   win-input.ps1 key <esc|enter>        one key press to the focused window
 #   win-input.ps1 shot <hwnd> <png>      screenshot of the window's rectangle
+#   win-input.ps1 wake                   closes a running screen saver, so input
+#                                        and screenshots reach the desktop
 param([string]$Command, [string]$A, [string]$B)
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
@@ -19,12 +21,34 @@ public static class JaalWin {
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, uint d, UIntPtr e);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint f, UIntPtr e);
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr OpenDesktopW(string name, uint flags, bool inherit, uint access);
+  [DllImport("user32.dll")] public static extern bool EnumDesktopWindows(IntPtr desk, EnumProc proc, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool PostMessageW(IntPtr h, uint msg, IntPtr w, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr d);
+  // A screen saver runs on its own desktop, where a WM_CLOSE ends it. While it
+  // runs, SendInput and screen copies from the default desktop fail.
+  public static int CloseScreenSaver() {
+    IntPtr desk = OpenDesktopW("Screen-saver", 0, false, 0x0001 | 0x0040 | 0x0080);
+    if (desk == IntPtr.Zero) return 0;
+    int closed = 0;
+    EnumDesktopWindows(desk, delegate(IntPtr h, IntPtr l) {
+      if (IsWindowVisible(h)) { PostMessageW(h, 0x0010, IntPtr.Zero, IntPtr.Zero); closed++; }
+      return true;
+    }, IntPtr.Zero);
+    CloseDesktop(desk);
+    return closed;
+  }
 }
 "@
 # Physical pixels everywhere, so window rects, clicks and screenshots agree on
 # a scaled display.
 [void][JaalWin]::SetProcessDPIAware()
 switch ($Command) {
+  "wake" {
+    if ([JaalWin]::CloseScreenSaver() -gt 0) { Start-Sleep -Milliseconds 1500 }
+  }
   "rect" {
     $r = New-Object JaalWin+RECT
     [void][JaalWin]::GetWindowRect([IntPtr][long]$A, [ref]$r)

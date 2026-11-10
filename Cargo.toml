@@ -9,6 +9,7 @@ members = [
   "crates/jaal-engine-sys",
   "crates/jaal-engine",
   "crates/jaal-ui-hello",
+  "crates/jaal-ui",
 ]
 # Vendored and patched; linted and formatted upstream, not here.
 exclude = ["third_party/gpui"]

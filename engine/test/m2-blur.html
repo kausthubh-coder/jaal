@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>jaal M2 blur test</title>
+<style>
+  html, body { margin: 0; height: 100%; }
+  /* Hard-edged stripes and large text: under a blur the edges go soft and the
+     text becomes unreadable; under a flat tint both stay sharp. */
+  body {
+    background: repeating-linear-gradient(90deg, #e2452f 0 60px, #f4f1ea 60px 120px, #2f7dd1 120px 180px, #1f1c18 180px 240px);
+    font: 700 64px system-ui, sans-serif; color: #fff; text-shadow: 0 0 2px #000;
+    display: grid; align-content: start; padding-top: 60px; justify-items: center; gap: 40px;
+  }
+</style>
+<!-- Engine acceptance page for M2's blur check. The command bar opens over it. -->
+<div>SHARP TEXT BEHIND THE BAR</div>
+<div>SHARP TEXT BEHIND THE BAR</div>
+<div>SHARP TEXT BEHIND THE BAR</div>

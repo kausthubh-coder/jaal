@@ -321,6 +321,14 @@ impl Platform for WindowsPlatform {
         }
     }
 
+    // jaal: embedded mode. Everything `run` does except its GetMessageW
+    // loop: the host (Chromium's message pump) already dispatches this
+    // thread's window messages, GPUI's among them. See JAAL.md.
+    fn run_embedded(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
+        on_finish_launching();
+        self.begin_vsync_thread();
+    }
+
     fn quit(&self) {
         self.foreground_executor()
             .spawn(async { unsafe { PostQuitMessage(0) } })
