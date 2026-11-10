@@ -18,11 +18,11 @@ use gpui::{
     MouseDownEvent, SharedString, Subscription, UniformListScrollHandle, Window, WindowHandle,
     actions, div, linear_color_stop, linear_gradient, prelude::*, px, svg, uniform_list,
 };
+use jaal_engine::NativeView;
 use jaal_engine::{
     Engine, Event, Key, NavAction, Placement, Tab, TabState, ViewOptions, WindowInfo, WindowState,
     WindowStyle,
 };
-use std::ffi::c_void;
 use std::rc::Rc;
 
 actions!(
@@ -159,7 +159,7 @@ pub struct Shell {
     engine: Engine,
     engine_window: jaal_engine::Window,
     /// This sidebar's own native view.
-    view: *mut c_void,
+    view: NativeView,
     tabs: Vec<TabRow>,
     active: Option<Tab>,
     rows: Rc<[SharedString]>,
@@ -167,7 +167,7 @@ pub struct Shell {
     last_logged_scroll: usize,
     address: Entity<TextInput>,
     editing_address: bool,
-    command_bar: Option<(WindowHandle<CommandBar>, *mut c_void)>,
+    command_bar: Option<(WindowHandle<CommandBar>, NativeView)>,
     info: Option<WindowInfo>,
     /// The layout last given to the engine: with the sidebar, or the page
     /// alone (fullscreen).
@@ -242,6 +242,7 @@ impl Shell {
         })
         .detach();
 
+        log(&format!("ui: {} test rows", config.fake_rows));
         let this = Self {
             engine,
             engine_window,
@@ -324,9 +325,6 @@ impl Shell {
                 self.info = Some(info);
                 self.apply_layout(cx);
                 cx.notify();
-            }
-            Event::WindowClosed(closed) if closed == self.engine_window => {
-                let _ = self.engine.quit();
             }
             _ => {}
         }

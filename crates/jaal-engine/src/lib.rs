@@ -125,6 +125,22 @@ impl Placement {
     }
 }
 
+/// One of the app's own native views: an HWND on Windows, an NSView on the
+/// Mac. The engine checks that it is a live view of the UI thread before it
+/// uses it, so a wrong handle is refused, not followed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NativeView(*mut c_void);
+
+impl NativeView {
+    pub fn from_raw(handle: *mut c_void) -> Self {
+        Self(handle)
+    }
+
+    pub fn as_ptr(self) -> *mut c_void {
+        self.0
+    }
+}
+
 /// How one of the app's native views sits in an engine window.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ViewOptions {
@@ -601,32 +617,32 @@ impl Engine {
     pub fn attach_view(
         &self,
         window: Window,
-        native_view: *mut c_void,
+        native_view: NativeView,
         options: ViewOptions,
     ) -> Result<(), Error> {
         let attach = self.api.window_attach_view.ok_or(Error::Unsupported)?;
         let options = options.to_raw();
         // SAFETY: options is valid for the call; the engine checks that
         // native_view is a live window of this thread before using it.
-        check(unsafe { attach(window.0, native_view, &options) })
+        check(unsafe { attach(window.0, native_view.0, &options) })
     }
 
     pub fn update_view(
         &self,
         window: Window,
-        native_view: *mut c_void,
+        native_view: NativeView,
         options: ViewOptions,
     ) -> Result<(), Error> {
         let update = self.api.window_update_view.ok_or(Error::Unsupported)?;
         let options = options.to_raw();
         // SAFETY: as in attach_view.
-        check(unsafe { update(window.0, native_view, &options) })
+        check(unsafe { update(window.0, native_view.0, &options) })
     }
 
-    pub fn detach_view(&self, window: Window, native_view: *mut c_void) -> Result<(), Error> {
+    pub fn detach_view(&self, window: Window, native_view: NativeView) -> Result<(), Error> {
         let detach = self.api.window_detach_view.ok_or(Error::Unsupported)?;
         // SAFETY: the engine only compares native_view with views it holds.
-        check(unsafe { detach(window.0, native_view) })
+        check(unsafe { detach(window.0, native_view.0) })
     }
 
     /// Gives keyboard focus back to the page, after one of the app's views

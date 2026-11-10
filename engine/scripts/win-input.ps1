@@ -13,9 +13,25 @@
 #   win-input.ps1 state <hwnd>             -> minimized, maximized or normal
 #   win-input.ps1 foreground               -> the foreground window's handle
 #   win-input.ps1 shot <hwnd> <png>        screenshot of the window's rectangle
+#   win-input.ps1 pixel <x> <y>            -> "r g b" of one screen pixel
+#   win-input.ps1 row <x1> <x2> <y>        -> "step min max" for one screen row:
+#                                          the largest change between neighbouring
+#                                          pixels, and the darkest and lightest
+#                                          pixel (0 to 255). Blur lowers the step.
+#   win-input.ps1 span <x1> <x2> <y> <r> <g> <b>   -> "first last": the first and
+#                                          last x in that screen row whose pixel
+#                                          is not that color (a difference over
+#                                          24 in some channel), or "none"
+#   win-input.ps1 children <hwnd>          -> one line per direct child window:
+#                                          "hwnd class visible left top right bottom"
+#   win-input.ps1 toplevel <pid>           -> one line per visible top-level window
+#                                          of the process: "hwnd class owner
+#                                          taskbar left top right bottom"
+#   win-input.ps1 owned <hwnd>             -> the same, for the visible windows
+#                                          that window owns, in any process
 #   win-input.ps1 wake                     closes a running screen saver, so input
 #                                          and screenshots reach the desktop
-param([string]$Command, [string]$A, [string]$B, [string]$C, [string]$D, [string]$E)
+param([string]$Command, [string]$A, [string]$B, [string]$C, [string]$D, [string]$E, [string]$F)
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 Add-Type @"
@@ -41,6 +57,52 @@ public static class JaalWin {
   [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint x, uint y, int d, UIntPtr e);
   [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint f, UIntPtr e);
   [DllImport("user32.dll")] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
+  [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EnumProc proc, IntPtr l);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc proc, IntPtr l);
+  [DllImport("user32.dll")] public static extern IntPtr GetParent(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, System.Text.StringBuilder name, int max);
+  [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr h, int index);
+  public static string ClassName(IntPtr h) {
+    System.Text.StringBuilder name = new System.Text.StringBuilder(256);
+    GetClassNameW(h, name, 256);
+    return name.ToString().Replace(' ', '_');
+  }
+  static string Describe(IntPtr h) {
+    RECT r; GetWindowRect(h, out r);
+    return r.Left + " " + r.Top + " " + r.Right + " " + r.Bottom;
+  }
+  public static System.Collections.Generic.List<string> Children(IntPtr parent) {
+    System.Collections.Generic.List<string> lines = new System.Collections.Generic.List<string>();
+    EnumChildWindows(parent, delegate(IntPtr h, IntPtr l) {
+      if (GetParent(h) == parent) {
+        lines.Add(h.ToInt64() + " " + ClassName(h) + " " + (IsWindowVisible(h) ? 1 : 0) + " " + Describe(h));
+      }
+      return true;
+    }, IntPtr.Zero);
+    return lines;
+  }
+  // Visible top-level windows: of one process (pid), or owned by one window
+  // (owner_filter) whatever process made them. Chrome shows file dialogs from
+  // a utility process, owned by the browser's window.
+  public static System.Collections.Generic.List<string> TopLevel(uint pid, IntPtr owner_filter) {
+    System.Collections.Generic.List<string> lines = new System.Collections.Generic.List<string>();
+    EnumWindows(delegate(IntPtr h, IntPtr l) {
+      uint owner_pid; GetWindowThreadProcessId(h, out owner_pid);
+      bool wanted = owner_filter != IntPtr.Zero ? GetWindow(h, 4) == owner_filter : owner_pid == pid;
+      if (wanted && IsWindowVisible(h)) {
+        IntPtr owner = GetWindow(h, 4);
+        long ex = GetWindowLongPtr(h, -20).ToInt64();
+        // What the taskbar shows: an unowned window that isn't a tool
+        // window, or any window that asks for a button.
+        bool taskbar = (ex & 0x00040000) != 0 || (owner == IntPtr.Zero && (ex & 0x00000080) == 0);
+        lines.Add(h.ToInt64() + " " + ClassName(h) + " " + owner.ToInt64() + " " + (taskbar ? 1 : 0) + " " + Describe(h));
+      }
+      return true;
+    }, IntPtr.Zero);
+    return lines;
+  }
   public delegate bool EnumProc(IntPtr h, IntPtr l);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr OpenDesktopW(string name, uint flags, bool inherit, uint access);
   [DllImport("user32.dll")] public static extern bool EnumDesktopWindows(IntPtr desk, EnumProc proc, IntPtr l);
@@ -159,5 +221,50 @@ switch ($Command) {
     $g.CopyFromScreen($r.Left, $r.Top, 0, 0, $bmp.Size)
     $bmp.Save($B, [System.Drawing.Imaging.ImageFormat]::Png)
   }
+  "pixel" {
+    $bmp = New-Object System.Drawing.Bitmap 1, 1
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.CopyFromScreen([int]$A, [int]$B, 0, 0, $bmp.Size)
+    # Not $c: PowerShell names ignore case, and $C is a string parameter.
+    $color = $bmp.GetPixel(0, 0)
+    "$($color.R) $($color.G) $($color.B)"
+  }
+  "row" {
+    $x1 = [int]$A; $x2 = [int]$B
+    $bmp = New-Object System.Drawing.Bitmap ($x2 - $x1), 1
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.CopyFromScreen($x1, [int]$C, 0, 0, $bmp.Size)
+    $step = 0; $min = 255; $max = 0; $previous = $null
+    for ($x = 0; $x -lt $bmp.Width; $x++) {
+      $color = $bmp.GetPixel($x, 0)
+      $light = [int](($color.R + $color.G + $color.B) / 3)
+      if ($light -lt $min) { $min = $light }
+      if ($light -gt $max) { $max = $light }
+      if ($previous) {
+        $change = [Math]::Max([Math]::Abs($color.R - $previous.R), [Math]::Max([Math]::Abs($color.G - $previous.G), [Math]::Abs($color.B - $previous.B)))
+        if ($change -gt $step) { $step = $change }
+      }
+      $previous = $color
+    }
+    "$step $min $max"
+  }
+  "span" {
+    $x1 = [int]$A; $x2 = [int]$B
+    $bmp = New-Object System.Drawing.Bitmap ($x2 - $x1), 1
+    $g = [System.Drawing.Graphics]::FromImage($bmp)
+    $g.CopyFromScreen($x1, [int]$C, 0, 0, $bmp.Size)
+    $first = -1; $last = -1
+    for ($x = 0; $x -lt $bmp.Width; $x++) {
+      $color = $bmp.GetPixel($x, 0)
+      if ([Math]::Abs($color.R - [int]$D) -gt 24 -or [Math]::Abs($color.G - [int]$E) -gt 24 -or [Math]::Abs($color.B - [int]$F) -gt 24) {
+        if ($first -lt 0) { $first = $x }
+        $last = $x
+      }
+    }
+    if ($first -lt 0) { "none" } else { "$($x1 + $first) $($x1 + $last)" }
+  }
+  "children" { [JaalWin]::Children([IntPtr][long]$A) }
+  "toplevel" { [JaalWin]::TopLevel([uint32]$A, [IntPtr]::Zero) }
+  "owned" { [JaalWin]::TopLevel(0, [IntPtr][long]$A) }
   default { throw "unknown command $Command" }
 }

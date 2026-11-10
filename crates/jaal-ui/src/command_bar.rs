@@ -18,8 +18,8 @@ use gpui::{
     WeakEntity, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind,
     WindowOptions, actions, div, point, prelude::*, px, size, svg,
 };
+use jaal_engine::NativeView;
 use jaal_engine::{Engine, Placement, Tab, ViewOptions};
-use std::ffi::c_void;
 
 /// The bar's width, and the room around it for its shadow, in DIPs.
 pub const BAR_WIDTH: i32 = 540;
@@ -133,7 +133,7 @@ pub struct CommandBar {
     shell: WeakEntity<Shell>,
     engine: Engine,
     engine_window: jaal_engine::Window,
-    view: *mut c_void,
+    view: NativeView,
     mode: BarMode,
     tabs: Vec<(Tab, SharedString, String)>,
     input: Entity<TextInput>,
@@ -156,7 +156,7 @@ impl CommandBar {
         tabs: Vec<(Tab, SharedString, String)>,
         theme: Theme,
         cx: &mut App,
-    ) -> Option<(WindowHandle<CommandBar>, *mut c_void)> {
+    ) -> Option<(WindowHandle<CommandBar>, NativeView)> {
         let results = results_for("", &tabs);
         let options = view_options(results.len());
         let bar = cx

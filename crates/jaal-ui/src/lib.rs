@@ -40,13 +40,15 @@ pub(crate) fn log(line: &str) {
 
 /// A GPUI window's native view: its HWND on Windows, its NSView on macOS.
 /// The engine takes it in `attach_view`.
-pub(crate) fn native_view(window: &gpui::Window) -> *mut c_void {
+pub(crate) fn native_view(window: &gpui::Window) -> jaal_engine::NativeView {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    match HasWindowHandle::window_handle(window).map(|handle| handle.as_raw()) {
-        Ok(RawWindowHandle::Win32(handle)) => handle.hwnd.get() as *mut c_void,
-        Ok(RawWindowHandle::AppKit(handle)) => handle.ns_view.as_ptr(),
-        other => panic!("unexpected GPUI window handle: {other:?}"),
-    }
+    jaal_engine::NativeView::from_raw(
+        match HasWindowHandle::window_handle(window).map(|handle| handle.as_raw()) {
+            Ok(RawWindowHandle::Win32(handle)) => handle.hwnd.get() as *mut c_void,
+            Ok(RawWindowHandle::AppKit(handle)) => handle.ns_view.as_ptr(),
+            other => panic!("unexpected GPUI window handle: {other:?}"),
+        },
+    )
 }
 
 fn config_from_env() -> shell::Config {
@@ -89,21 +91,25 @@ pub unsafe extern "C" fn jaal_ui_main(get_api: sys::jaal_engine_get_api_fn) {
     // Engine events arrive from Chromium's loop, outside any GPUI update.
     // The sidebar reads them from this channel.
     let (sender, receiver) = futures::channel::mpsc::unbounded();
+    let window = engine
+        .create_window_with(WindowOptions {
+            frameless: config.frameless,
+        })
+        .expect("create a window");
     engine
         .on_event(move |event| {
             log(&format!("{event:?}"));
+            // Handled here, not in the sidebar: the sidebar is a child of
+            // the window and is gone by the time the window has closed.
+            if event == jaal_engine::Event::WindowClosed(window) {
+                let _ = engine.quit();
+            }
             let _ = sender.unbounded_send(event);
         })
         .expect("set the event handler");
     engine
         .set_shortcut_filter(shell::is_reserved_shortcut)
         .expect("set the shortcut filter");
-
-    let window = engine
-        .create_window_with(WindowOptions {
-            frameless: config.frameless,
-        })
-        .expect("create a window");
     for (index, url) in config.urls.iter().enumerate() {
         if let Err(error) = engine.open_tab(window, url, index == 0) {
             log(&format!("could not open {url}: {error}"));

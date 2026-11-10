@@ -71,6 +71,8 @@ class JaalBrowserWindow : public BrowserWindow,
   void SetPageRect(std::optional<gfx::Rect> rect);
   void SetPagePlacement(const jaal_placement& placement);
   gfx::Rect GetContentsBoundsInScreen() const;
+  // The page's rectangle in the window's client area.
+  gfx::Rect GetContentsBoundsInWidget() const;
 
   // The app's native views inside this window (jaal_engine.h).
   jaal_status AttachView(void* native_view, const jaal_view_options& options);

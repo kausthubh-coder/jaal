@@ -686,6 +686,10 @@ gfx::Rect JaalBrowserWindow::GetContentsBoundsInScreen() const {
   return web_view_->GetBoundsInScreen();
 }
 
+gfx::Rect JaalBrowserWindow::GetContentsBoundsInWidget() const {
+  return web_view_->ConvertRectToWidget(web_view_->GetLocalBounds());
+}
+
 void JaalBrowserWindow::OnMouseEvent(ui::MouseEvent* event) {
 #if BUILDFLAG(IS_WIN)
   // Windows leaves keyboard focus on a child window when the user clicks its

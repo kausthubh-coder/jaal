@@ -10,8 +10,9 @@ namespace jaal {
 class JaalBrowserWindow;
 
 // Where Chrome's tab-modal dialogs go (HTTP auth, JavaScript dialogs,
-// beforeunload): centred over the page, hanging from its top edge. Copied from
-// WebUIBrowserModalDialogHost, which only differs in its window class.
+// beforeunload): centred over the page, a little below its top edge. Started
+// as a copy of WebUIBrowserModalDialogHost; the position is jaal's own, since
+// the page is a card beside the sidebar and not the whole window.
 class JaalModalDialogHost : public web_modal::WebContentsModalDialogHost {
  public:
   explicit JaalModalDialogHost(JaalBrowserWindow* window);

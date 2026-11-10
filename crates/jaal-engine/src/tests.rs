@@ -408,7 +408,7 @@ fn attach_view_passes_the_view_and_every_option() {
     };
 
     engine
-        .attach_view(window, 0x1234 as *mut c_void, options)
+        .attach_view(window, NativeView::from_raw(0x1234 as *mut c_void), options)
         .unwrap();
 
     assert_eq!(
